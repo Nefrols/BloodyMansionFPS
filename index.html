@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>КРОВАВЫЙ ОСОБНЯК — воксельный FPS</title>
 <style>
   :root{
@@ -10,10 +10,12 @@
     --panel:rgba(9,9,11,.72); --line:rgba(255,255,255,.11); --mono:ui-monospace,Consolas,"Courier New",monospace;
     --display:"Bahnschrift Condensed","Arial Narrow",Impact,sans-serif;
   }
-  *{box-sizing:border-box}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;
+    -webkit-user-select:none;user-select:none}
   html,body{margin:0;height:100%;overflow:hidden;background:#07080b;color:var(--ink);
-    font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,sans-serif;user-select:none;-webkit-user-select:none}
-  canvas{display:block}
+    font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,sans-serif;user-select:none;-webkit-user-select:none;
+    -webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior:none;touch-action:manipulation}
+  canvas{display:block;touch-action:none}
   #hud{position:fixed;inset:0;z-index:10;pointer-events:none;opacity:0;transition:opacity .3s}
   #hud.on{opacity:1}
   #hud::after{content:"";position:fixed;inset:0;pointer-events:none;
@@ -224,7 +226,7 @@
 
   /* ---------- touch controls (phones / tablets) ---------- */
   html.touch, html.touch body{position:fixed;inset:0;width:100%;height:100%;overflow:hidden;
-    overscroll-behavior:none;touch-action:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+    overscroll-behavior:none;-webkit-touch-callout:none}
   html.touch canvas{touch-action:none}
   #touch{position:fixed;inset:0;z-index:14;display:none;pointer-events:none}
   #touch.on{display:block}
@@ -242,9 +244,11 @@
     box-shadow:0 3px 12px rgba(0,0,0,.35)}
   .tbtn.press{background:rgba(255,106,42,.8);border-color:#ffb083;color:#1a0a04;text-shadow:none}
   .tbtn.on{border-color:#ffa870;box-shadow:inset 0 0 18px rgba(255,106,42,.45),0 3px 12px rgba(0,0,0,.35);color:#ffd2b9}
-  #tButtonsR{position:absolute;right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(18px + env(safe-area-inset-bottom,0px));
+  #tButtonsR{position:absolute;right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(126px + env(safe-area-inset-bottom,0px));
     display:flex;align-items:flex-end;gap:8px}
   #tButtonsR .tbtn{position:relative}
+  #tFire{right:calc(18px + env(safe-area-inset-right,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));
+    width:92px;height:92px;font-size:11px;background:rgba(132,16,10,.52);border-color:rgba(255,120,70,.65)}
   #tAim{width:64px;height:64px;font-size:15px}
   #tJump{font-size:15px}
   #tSwitch,#tCrouch{width:52px;height:52px}
@@ -349,6 +353,7 @@
     <button type="button" tabindex="-1" class="tbtn" id="tJump">↑</button>
     <button type="button" tabindex="-1" class="tbtn" id="tAim">⌖</button>
   </div>
+  <button type="button" tabindex="-1" class="tbtn" id="tFire">ОГОНЬ</button>
 </div>
 <div id="adsBlur"></div>
 <div id="fps"></div>
@@ -5503,6 +5508,45 @@ function updateViewmodel(dt){
   camera.fov=damp(camera.fov,targetFov,34,dt); camera.updateProjectionMatrix();
 }
 
+/* ---------- автоприцел (только сенсор): мягко доводит на видимую цель при огне/прицеле ---------- */
+const AA_CONE=.18; /* ~10° от центра экрана */
+function aimRayClear(ax,ay,az,bx,by,bz){
+  const d=Math.hypot(bx-ax,by-ay,bz-az);
+  const steps=Math.min(96,Math.ceil(d/.6));
+  for(let i=1;i<steps;i++){
+    const t=i/steps;
+    if(solidAtWorld(ax+(bx-ax)*t,ay+(by-ay)*t,az+(bz-az)*t)) return false;
+  }
+  return true;
+}
+function applyAimAssist(dt){
+  if(!touchMode||!aimAssistOn||!player.alive) return;
+  if(!player.triggerHeld&&player.ads<.5) return;
+  const eyeY=player.pos.y+player.eye;
+  let best=null,bestOff=AA_CONE;
+  for(const b of bots){
+    if(!b.alive) continue;
+    const dx=b.pos.x-player.pos.x, dz=b.pos.z-player.pos.z;
+    const dist=Math.hypot(dx,dz);
+    if(dist>55||dist<1.2) continue;
+    const ty=botEyeY(b)-.34;
+    let dYaw=Math.atan2(-dx,-dz)-player.yaw;
+    dYaw=((dYaw+Math.PI)%TAU+TAU)%TAU-Math.PI;
+    const dPitch=Math.atan2(ty-eyeY,dist)-player.pitch;
+    const off=Math.hypot(dYaw*Math.cos(player.pitch),dPitch);
+    if(off>=bestOff) continue;
+    if(!aimRayClear(player.pos.x,eyeY,player.pos.z,b.pos.x,ty,b.pos.z)) continue;
+    bestOff=off; best={dYaw,dPitch};
+  }
+  if(!best) return;
+  /* чем ближе к центру — тем сильнее; в прицеле тянет заметнее */
+  const rate=1.35*(1-bestOff/AA_CONE)*(.7+player.ads*.6);
+  const len=Math.hypot(best.dYaw,best.dPitch)||1;
+  const turn=Math.min(len,rate*dt);
+  player.yaw+=best.dYaw/len*turn;
+  player.pitch=clamp(player.pitch+best.dPitch/len*turn,-1.47,1.47);
+}
+
 /* ============================================================
    PLAYER UPDATE
    ============================================================ */
@@ -5594,6 +5638,7 @@ function updatePlayer(dt){
   player.recoilYaw=damp(player.recoilYaw,0,7,dt);
   player.bloom=damp(player.bloom,0,6,dt);
   player.shake=damp(player.shake,0,4,dt);
+  applyAimAssist(dt);
   const bob=Math.sin(player.bob)*.016*player.bobAmt;
   const shakeX=(Math.random()-.5)*player.shake*.03;
   const shakeY=(Math.random()-.5)*player.shake*.03;
@@ -5717,6 +5762,7 @@ let scoreboardOpen=false;
 let fullscreenPref=true;
 let crosshairOn=true;
 let tracersOn=true;
+let aimAssistOn=true;
 let centerTimer=0;
 let wallT=0;
 let hudTimer=0,fpsTimer=0,fpsFrames=0;
@@ -5850,11 +5896,12 @@ function showMenu(mode,winner){
   const overlay=$('#overlay'); overlay.classList.remove('hide');
   touchUI.show(false);
   const hint=touchMode
-    ? `<p class="hint"><b>ЛЕВЫЙ СТИК</b> движение · <b>ЭКРАН</b> обзор · <b>ДВОЙНОЙ ТАП</b> огонь, палец можно вести · <b>⌖</b> прицел · <b>II</b> пауза</p>`
+    ? `<p class="hint"><b>ЛЕВЫЙ СТИК</b> движение, до упора — бег · <b>ЭКРАН</b> обзор · <b>ОГОНЬ</b> держать и вести пальцем · <b>⌖</b> прицел · <b>II</b> пауза</p>`
     : `<p class="hint"><b>WASD</b> движение · <b>SHIFT</b> бег · <b>ЛКМ</b> огонь · <b>ПКМ</b> прицел · <b>R</b> перезарядка · <b>1</b> пистолет · <b>2</b> основное · <b>Q</b>/<b>КОЛЕСО</b> смена · <b>ПРОБЕЛ</b> прыжок · <b>C</b> присед · <b>TAB</b> таблица · <b>ESC</b> пауза</p>`;
   const fsRow=`<label class="check"><input type="checkbox" id="fullscreenPick" ${fullscreenPref?'checked':''}><span>В полном экране</span><em>ESC / F11 — выйти</em></label>`;
   const crossRow=`<label class="check"><input type="checkbox" id="crosshairPick" ${crosshairOn?'checked':''}><span>ОБЫЧНЫЙ ПРИЦЕЛ</span><em>ПЕРЕКРЕСТИЕ В ИГРЕ</em></label>`;
   const traceRow=`<label class="check"><input type="checkbox" id="tracersPick" ${tracersOn?'checked':''}><span>ТРАССЕРА</span><em>ПУЛЕМЁТ: КАЖДЫЙ 5-Й ЗЕЛЁНЫЙ</em></label>`;
+  const aimRow=touchMode?`<label class="check"><input type="checkbox" id="aimAssistPick" ${aimAssistOn?'checked':''}><span>АВТОПРИЦЕЛ</span><em>ПОДТЯГИВАЕТ К ЦЕЛИ ПРИ ОГНЕ И ПРИЦЕЛЕ</em></label>`:'';
   const seg=(set,label,items,cur)=>`<div class="seg" data-set="${set}"><span class="seg-label">${label}</span>${items.map(([v,t])=>`<button data-v="${v}" class="${v===cur?'on':''}" aria-pressed="${v===cur}">${t}</button>`).join('')}</div>`;
   const classes=seg('class','КЛАСС',[[1,'ДРОБОВИК'],[2,'АВТОМАТ'],[3,'ПУЛЕМЁТ'],[4,'ВИНТОВКА']],player.nextPrimary);
   const modeSel=seg('mode','РЕЖИМ',[['ffa','ВСЕ ПРОТИВ ВСЕХ'],['solo','ОДИН ПРОТИВ ВСЕХ']],game.mode);
@@ -5921,6 +5968,7 @@ function showMenu(mode,winner){
       ${fsRow}
       ${crossRow}
       ${traceRow}
+      ${aimRow}
       ${hint}
     </div>`;
     return;
@@ -5940,6 +5988,7 @@ function showMenu(mode,winner){
     ${fsRow}
     ${crossRow}
     ${traceRow}
+    ${aimRow}
     <button class="btn start" data-action="start">ВОЙТИ В БОЙ</button>
     ${hint}
   </div>`;
@@ -6166,6 +6215,13 @@ addEventListener('mouseup',e=>{
   if(e.button===2)mouse.right=false;
 });
 addEventListener('contextmenu',e=>e.preventDefault());
+/* iOS Safari игнорирует user-scalable=no: гасим пинч и двойной тап вручную,
+   иначе страница зумится, а двойной тап/долгое нажатие выделяет текст HUD */
+for(const ev of ['gesturestart','gesturechange','gestureend'])
+  document.addEventListener(ev,e=>e.preventDefault(),{passive:false});
+document.addEventListener('dblclick',e=>e.preventDefault(),{passive:false});
+addEventListener('touchmove',e=>{ if(e.touches.length>1) e.preventDefault(); },{passive:false});
+document.addEventListener('selectstart',e=>e.preventDefault());
 addEventListener('wheel',e=>{
   if(!game.started||game.paused||game.over||!player.alive) return;
   toggleSidearm();
@@ -6186,12 +6242,12 @@ document.addEventListener('pointerlockchange',()=>{
 /* ---------- touch controls ---------- */
 const touchUI=(()=>{
   if(!touchMode) return {show(){},reset(){},update(){}};
-  const root=$('#touch'), stick=$('#tStick'), knob=stick.querySelector('i'), lookPad=$('#tLook');
+  const root=$('#touch'), stick=$('#tStick'), knob=stick.querySelector('i'), lookPad=$('#tLook'), fireBtn=$('#tFire');
   const play=()=>game.started&&!game.paused&&!game.over&&player.alive;
   const R=44, DEAD=.16;
-  let stickId=null, lookId=null, lookX=0, lookY=0;
+  let stickId=null, lookId=null, lookX=0, lookY=0, fireId=null, fireX=0, fireY=0;
 
-  const stick0=()=>{knob.style.transform='translate(0,0)';touchMove.x=touchMove.y=0;};
+  const stick0=()=>{knob.style.transform='translate(0,0)';touchMove.x=touchMove.y=0;keys.ShiftLeft=false;};
   function setStick(cx,cy){
     const d=Math.hypot(cx,cy);
     if(d<2){stick0();return;}
@@ -6199,6 +6255,8 @@ const touchUI=(()=>{
     knob.style.transform=`translate(${(ux*reach).toFixed(1)}px,${(uy*reach).toFixed(1)}px)`;
     touchMove.x=s<DEAD?0:ux*s;
     touchMove.y=s<DEAD?0:-uy*s;
+    /* как в PUBG: стик до упора вперёд — бег, чуть отпустил — шаг */
+    keys.ShiftLeft=touchMove.y>.92;
   }
   const resetStick=()=>{stickId=null;stick0();};
 
@@ -6219,38 +6277,51 @@ const touchUI=(()=>{
   for(const ev of ['pointerup','pointercancel','lostpointercapture'])
     stick.addEventListener(ev,e=>{ if(e.pointerId===stickId) resetStick(); });
 
-  /* правый палец — обзор; двойной тап по экрану начинает огонь, палец можно вести */
-  let tapAt=0,tapX=0,tapY=0,downAt=0,downX=0,downY=0,travel=0,firingPad=false;
+  /* правый палец — обзор */
   lookPad.addEventListener('pointerdown',e=>{
     if(lookId!==null) return;
-    lookId=e.pointerId; lookX=downX=e.clientX; lookY=downY=e.clientY;
-    downAt=performance.now(); travel=0; firingPad=false;
-    if(downAt-tapAt<320&&Math.hypot(e.clientX-tapX,e.clientY-tapY)<90&&play()){
-      firingPad=true; tapAt=0;
-      mouse.left=true; player.triggerHeld=true; player.triggerQueued=true;
-    }
+    lookId=e.pointerId; lookX=e.clientX; lookY=e.clientY;
     try{lookPad.setPointerCapture(e.pointerId);}catch(err){}
     e.preventDefault();
   });
   lookPad.addEventListener('pointermove',e=>{
     if(e.pointerId!==lookId) return;
     const dx=clamp(e.clientX-lookX,-170,170), dy=clamp(e.clientY-lookY,-170,170);
-    travel+=Math.abs(e.clientX-lookX)+Math.abs(e.clientY-lookY);
     lookX=e.clientX; lookY=e.clientY;
-    if(!play()) return;
+    if(play()) aimBy(dx,dy);
+  });
+  for(const ev of ['pointerup','pointercancel','lostpointercapture'])
+    lookPad.addEventListener(ev,e=>{ if(e.pointerId===lookId) lookId=null; });
+
+  /* кнопка огня как в PUBG/CODM: держишь — стреляешь, ведёшь палец — доворачиваешь прицел */
+  fireBtn.addEventListener('pointerdown',e=>{
+    if(fireId!==null) return;
+    fireId=e.pointerId; fireX=e.clientX; fireY=e.clientY;
+    fireBtn.classList.add('press');
+    try{fireBtn.setPointerCapture(e.pointerId);}catch(err){}
+    if(play()){ mouse.left=true; player.triggerHeld=true; player.triggerQueued=true; }
+    e.preventDefault();
+  });
+  fireBtn.addEventListener('pointermove',e=>{
+    if(e.pointerId!==fireId) return;
+    const dx=clamp(e.clientX-fireX,-170,170), dy=clamp(e.clientY-fireY,-170,170);
+    fireX=e.clientX; fireY=e.clientY;
+    if(play()) aimBy(dx,dy);
+  });
+  for(const ev of ['pointerup','pointercancel','lostpointercapture'])
+    fireBtn.addEventListener(ev,e=>{
+      if(e.pointerId!==fireId) return;
+      fireId=null; fireBtn.classList.remove('press');
+      mouse.left=false; player.triggerHeld=false;
+    });
+
+  function aimBy(dx,dy){
     const sens=.0026*(player.ads>.6&&currentWeapon().scope?.4:1);
     player.yaw-=dx*sens;
     player.pitch=clamp(player.pitch-dy*sens,-1.47,1.47);
     player.swayX=clamp(player.swayX-dx*.00035,-.045,.045);
     player.swayY=clamp(player.swayY+dy*.00035,-.045,.045);
-  });
-  for(const ev of ['pointerup','pointercancel','lostpointercapture'])
-    lookPad.addEventListener(ev,e=>{
-      if(e.pointerId!==lookId) return;
-      lookId=null;
-      if(firingPad){ firingPad=false; mouse.left=false; player.triggerHeld=false; }
-      else if(performance.now()-downAt<260&&travel<16){ tapAt=performance.now(); tapX=downX; tapY=downY; }
-    });
+  }
 
   function bind(id,down,up){
     const el=$(id);
@@ -6273,10 +6344,10 @@ const touchUI=(()=>{
   bind('#tPause',()=>{ pauseGame(); });
 
   function reset(){
-    resetStick(); lookId=null;
-    firingPad=false;
+    resetStick(); lookId=null; fireId=null;
+    fireBtn.classList.remove('press');
     mouse.left=false; mouse.right=false; player.triggerHeld=false; player.triggerQueued=false;
-    keys.Space=false; keys.KeyC=false;
+    keys.Space=false; keys.KeyC=false; keys.ShiftLeft=false;
     $('#tAim').classList.remove('on');
     $('#tCrouch').classList.remove('on');
   }
@@ -6297,6 +6368,7 @@ $('#overlay').addEventListener('change',e=>{
     if(c) c.style.display=crosshairOn?'block':'none';
   }
   else if(e.target.id==='tracersPick') tracersOn=e.target.checked;
+  else if(e.target.id==='aimAssistPick') aimAssistOn=e.target.checked;
 });
 $('#overlay').addEventListener('click',e=>{
   const segBtn=e.target.closest('.seg button');
