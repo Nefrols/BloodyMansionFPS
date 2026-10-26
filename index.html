@@ -242,13 +242,12 @@
     box-shadow:0 3px 12px rgba(0,0,0,.35)}
   .tbtn.press{background:rgba(255,106,42,.8);border-color:#ffb083;color:#1a0a04;text-shadow:none}
   .tbtn.on{border-color:#ffa870;box-shadow:inset 0 0 18px rgba(255,106,42,.45),0 3px 12px rgba(0,0,0,.35);color:#ffd2b9}
-  #tFire{right:calc(18px + env(safe-area-inset-right,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));
-    width:92px;height:92px;font-size:11px;background:rgba(132,16,10,.55);border-color:rgba(255,120,70,.7)}
-  #tAim{right:calc(24px + env(safe-area-inset-right,0px));bottom:calc(122px + env(safe-area-inset-bottom,0px));width:64px;height:64px;font-size:15px}
-  #tJump{right:calc(124px + env(safe-area-inset-right,0px));bottom:calc(92px + env(safe-area-inset-bottom,0px));font-size:15px}
-  #tReload{right:calc(124px + env(safe-area-inset-right,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px))}
-  #tSwitch{right:calc(194px + env(safe-area-inset-right,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));width:52px;height:52px}
-  #tCrouch{right:calc(194px + env(safe-area-inset-right,0px));bottom:calc(84px + env(safe-area-inset-bottom,0px));width:52px;height:52px}
+  #tButtonsR{position:absolute;right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(18px + env(safe-area-inset-bottom,0px));
+    display:flex;align-items:flex-end;gap:8px}
+  #tButtonsR .tbtn{position:relative}
+  #tAim{width:64px;height:64px;font-size:15px}
+  #tJump{font-size:15px}
+  #tSwitch,#tCrouch{width:52px;height:52px}
   #tPause{left:calc(12px + env(safe-area-inset-left,0px));top:calc(10px + env(safe-area-inset-top,0px));
     width:44px;height:44px;z-index:2;font-size:13px}
   #tSwitch,#tCrouch,#tReload{font-size:9px;letter-spacing:.02em}
@@ -343,12 +342,13 @@
   <div id="tStick"><i></i></div>
   <div id="tRotate"><b>Поверните устройство</b><span>Горизонтально целиться и двигаться удобнее</span></div>
   <button type="button" tabindex="-1" class="tbtn" id="tPause">II</button>
-  <button type="button" tabindex="-1" class="tbtn" id="tSwitch">СМЕНА</button>
-  <button type="button" tabindex="-1" class="tbtn" id="tCrouch">ПРИСЕД</button>
-  <button type="button" tabindex="-1" class="tbtn" id="tReload">ПЕРЕЗАР.</button>
-  <button type="button" tabindex="-1" class="tbtn" id="tJump">↑</button>
-  <button type="button" tabindex="-1" class="tbtn" id="tAim">⌖</button>
-  <button type="button" tabindex="-1" class="tbtn" id="tFire">ОГОНЬ</button>
+  <div id="tButtonsR">
+    <button type="button" tabindex="-1" class="tbtn" id="tSwitch">СМЕНА</button>
+    <button type="button" tabindex="-1" class="tbtn" id="tCrouch">ПРИСЕД</button>
+    <button type="button" tabindex="-1" class="tbtn" id="tReload">ПЕРЕЗАР.</button>
+    <button type="button" tabindex="-1" class="tbtn" id="tJump">↑</button>
+    <button type="button" tabindex="-1" class="tbtn" id="tAim">⌖</button>
+  </div>
 </div>
 <div id="adsBlur"></div>
 <div id="fps"></div>
@@ -647,8 +647,14 @@ scene.background=new THREE.Color(0x9ec9e8);
 /* ---------- procedural audio (no files) ---------- */
 const AudioSys = (()=>{
   let ctx=null, master=null, noise=null, started=false;
+  /* iOS/Safari усыпляет контекст после фуллскрина или смены таба — будим его перед каждым звуком */
+  function wake(){
+    if(!ctx) return;
+    if(ctx.state==='closed'){ ctx=null; return; }
+    if(ctx.state!=='running'){ const p=ctx.resume(); if(p&&p.catch) p.catch(()=>{}); }
+  }
   function init(){
-    if(ctx){ if(ctx.state==='suspended') ctx.resume(); return; }
+    if(ctx){ wake(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if(!AC) return;
     ctx = new AC();
@@ -666,15 +672,18 @@ const AudioSys = (()=>{
     const drone2=ctx.createOscillator(); drone2.type='triangle'; drone2.frequency.value=58.5;
     const dg2=ctx.createGain(); dg2.gain.value=.009; drone2.connect(dg2); dg2.connect(master); drone2.start();
     started=true;
+    /* iOS создаёт контекст в 'suspended': без resume() здесь звук не появится до следующего жеста */
+    wake();
   }
   function output(pan){
+    wake();
     const g=ctx.createGain();
     if(ctx.createStereoPanner){const p=ctx.createStereoPanner();p.pan.value=clamp(pan||0,-1,1);g.connect(p);p.connect(master);}
     else g.connect(master);
     return g;
   }
   function burst(vol,dur,freq,type,pan,rate=1){
-    if(!ctx) return;
+    if(!ctx||ctx.state==='closed') return;
     const src=ctx.createBufferSource(); src.buffer=noise; src.playbackRate.value=rate;
     const f=ctx.createBiquadFilter(); f.type=type; f.frequency.value=freq; f.Q.value=.7;
     const g=ctx.createGain(); const t=ctx.currentTime;
@@ -683,7 +692,7 @@ const AudioSys = (()=>{
     src.start(t); src.stop(t+dur+.01);
   }
   function thump(vol,f0,f1,dur,pan){
-    if(!ctx) return;
+    if(!ctx||ctx.state==='closed') return;
     const o=ctx.createOscillator(); o.type='sine'; const t=ctx.currentTime;
     o.frequency.setValueAtTime(f0,t); o.frequency.exponentialRampToValueAtTime(f1,t+dur);
     const g=ctx.createGain(); g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(.0001,t+dur);
@@ -720,8 +729,13 @@ const AudioSys = (()=>{
   function gib(){ if(ctx){burst(.12,.24,520,'lowpass',rnd(-.4,.4),.45);burst(.08,.12,1700,'bandpass',rnd(-.4,.4),1.1);} }
   function spawn(){ if(ctx){thump(.09,180,70,.28,0);burst(.045,.16,1200,'bandpass',0,1.8);} }
   function ui(){ if(ctx) thump(.08,240,140,.09,0); }
-  return {init,shot,flesh,wall,click,step,hurt,death,gib,spawn,ui,scream,agony, get ready(){return started;}};
+  return {init,shot,flesh,wall,click,step,hurt,death,gib,spawn,ui,scream,agony, get ready(){return started;}, get state(){return ctx?ctx.state:'none';}};
 })();
+
+/* мобильные браузеры включают звук только из жеста: создаём/будим контекст на первом тапе */
+for(const ev of ['pointerdown','touchend','keydown'])
+  addEventListener(ev,()=>AudioSys.init(),{capture:true,passive:true});
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) AudioSys.init(); });
 
 /* ---------- voxel world ---------- */
 const S = 0.5;
@@ -5836,7 +5850,7 @@ function showMenu(mode,winner){
   const overlay=$('#overlay'); overlay.classList.remove('hide');
   touchUI.show(false);
   const hint=touchMode
-    ? `<p class="hint"><b>ЛЕВЫЙ СТИК</b> движение · <b>ПРАВЫЙ ЭКРАН</b> обзор · <b>ОГОНЬ</b> стрельба · <b>⌖</b> прицел · <b>II</b> пауза</p>`
+    ? `<p class="hint"><b>ЛЕВЫЙ СТИК</b> движение · <b>ЭКРАН</b> обзор · <b>ДВОЙНОЙ ТАП</b> огонь, палец можно вести · <b>⌖</b> прицел · <b>II</b> пауза</p>`
     : `<p class="hint"><b>WASD</b> движение · <b>SHIFT</b> бег · <b>ЛКМ</b> огонь · <b>ПКМ</b> прицел · <b>R</b> перезарядка · <b>1</b> пистолет · <b>2</b> основное · <b>Q</b>/<b>КОЛЕСО</b> смена · <b>ПРОБЕЛ</b> прыжок · <b>C</b> присед · <b>TAB</b> таблица · <b>ESC</b> пауза</p>`;
   const fsRow=`<label class="check"><input type="checkbox" id="fullscreenPick" ${fullscreenPref?'checked':''}><span>В полном экране</span><em>ESC / F11 — выйти</em></label>`;
   const crossRow=`<label class="check"><input type="checkbox" id="crosshairPick" ${crosshairOn?'checked':''}><span>ОБЫЧНЫЙ ПРИЦЕЛ</span><em>ПЕРЕКРЕСТИЕ В ИГРЕ</em></label>`;
@@ -5945,29 +5959,55 @@ function pauseGame(){
   if(!game.started||game.over||!player.alive) return;
   game.paused=true; keys.KeyW=keys.KeyA=keys.KeyS=keys.KeyD=keys.Space=keys.ShiftLeft=false;
   mouse.left=mouse.right=false; player.triggerHeld=false; player.adsHeld=false;
-  setScope(false); showMenu('pause');
+  setScope(false); keepAwake(false); showMenu('pause');
 }
 function requestLock(){
   if(touchMode) return;
   try{ const p=renderer.domElement.requestPointerLock(); if(p&&p.catch)p.catch(()=>{}); }catch(e){}
 }
+function lockOrientation(on){
+  try{
+    const so=screen.orientation;
+    if(!so) return;
+    if(on){ const p=so.lock&&so.lock('landscape'); if(p&&p.catch)p.catch(()=>{}); }
+    else if(so.unlock) so.unlock();
+  }catch(e){}
+}
+let wakeLock=null;
+function keepAwake(on){
+  try{
+    if(on){
+      if(!('wakeLock' in navigator)||wakeLock) return;
+      navigator.wakeLock.request('screen').then(l=>{
+        wakeLock=l; l.addEventListener('release',()=>{ if(wakeLock===l) wakeLock=null; });
+      }).catch(()=>{});
+    }else if(wakeLock){ const l=wakeLock; wakeLock=null; l.release().catch(()=>{}); }
+  }catch(e){}
+}
+document.addEventListener('fullscreenchange',()=>{ if(!document.fullscreenElement) lockOrientation(false); });
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&game.started&&!game.over&&!game.paused) keepAwake(true); });
 function applyFullscreen(on){
   const el=document.documentElement;
   try{
     if(on){
       if(document.fullscreenElement) return;
       const fn=el.requestFullscreen||el.webkitRequestFullscreen;
-      if(fn){const p=fn.call(el);if(p&&p.catch)p.catch(()=>{});}
+      if(fn){
+        const p=fn.call(el);
+        /* ориентацию можно фиксировать только после входа в fullscreen */
+        if(p&&p.then) p.then(()=>{lockOrientation(true);keepAwake(true);}).catch(()=>{});
+        else {lockOrientation(true);keepAwake(true);}
+      }
     }else if(document.fullscreenElement){
       const p=document.exitFullscreen?document.exitFullscreen():(document.webkitExitFullscreen&&document.webkitExitFullscreen());
-      if(p&&p.catch)p.catch(()=>{});
+      if(p&&p.then) p.then(()=>lockOrientation(false)).catch(()=>{}); else lockOrientation(false);
     }
   }catch(e){}
 }
 function resumeGame(){
   const fs=$('#fullscreenPick'); if(fs) fullscreenPref=fs.checked;
   applyFullscreen(fullscreenPref);
-  hideOverlay(); game.paused=false; AudioSys.init(); requestLock();
+  hideOverlay(); game.paused=false; AudioSys.init(); requestLock(); keepAwake(true);
 }
 
 function clearBattlefield(){
@@ -6039,6 +6079,7 @@ function beginMatch(regenMap){
   if(fs) fullscreenPref=fs.checked;
   applyFullscreen(fullscreenPref);
   requestLock();
+  keepAwake(true);
 }
 
 function endMatch(winner){
@@ -6049,6 +6090,7 @@ function endMatch(winner){
   $('#killPop').classList.remove('on');
   setScope(false); viewModel.visible=false;
   if(document.pointerLockElement) document.exitPointerLock();
+  keepAwake(false);
   $('#scoreboard').classList.remove('on');scoreboardOpen=false;
   showMenu('end',winner);
   AudioSys.ui();
@@ -6177,16 +6219,23 @@ const touchUI=(()=>{
   for(const ev of ['pointerup','pointercancel','lostpointercapture'])
     stick.addEventListener(ev,e=>{ if(e.pointerId===stickId) resetStick(); });
 
-  /* правый палец — обзор, ровно та же логика, что у мыши */
+  /* правый палец — обзор; двойной тап по экрану начинает огонь, палец можно вести */
+  let tapAt=0,tapX=0,tapY=0,downAt=0,downX=0,downY=0,travel=0,firingPad=false;
   lookPad.addEventListener('pointerdown',e=>{
     if(lookId!==null) return;
-    lookId=e.pointerId; lookX=e.clientX; lookY=e.clientY;
+    lookId=e.pointerId; lookX=downX=e.clientX; lookY=downY=e.clientY;
+    downAt=performance.now(); travel=0; firingPad=false;
+    if(downAt-tapAt<320&&Math.hypot(e.clientX-tapX,e.clientY-tapY)<90&&play()){
+      firingPad=true; tapAt=0;
+      mouse.left=true; player.triggerHeld=true; player.triggerQueued=true;
+    }
     try{lookPad.setPointerCapture(e.pointerId);}catch(err){}
     e.preventDefault();
   });
   lookPad.addEventListener('pointermove',e=>{
     if(e.pointerId!==lookId) return;
     const dx=clamp(e.clientX-lookX,-170,170), dy=clamp(e.clientY-lookY,-170,170);
+    travel+=Math.abs(e.clientX-lookX)+Math.abs(e.clientY-lookY);
     lookX=e.clientX; lookY=e.clientY;
     if(!play()) return;
     const sens=.0026*(player.ads>.6&&currentWeapon().scope?.4:1);
@@ -6196,7 +6245,12 @@ const touchUI=(()=>{
     player.swayY=clamp(player.swayY+dy*.00035,-.045,.045);
   });
   for(const ev of ['pointerup','pointercancel','lostpointercapture'])
-    lookPad.addEventListener(ev,e=>{ if(e.pointerId===lookId) lookId=null; });
+    lookPad.addEventListener(ev,e=>{
+      if(e.pointerId!==lookId) return;
+      lookId=null;
+      if(firingPad){ firingPad=false; mouse.left=false; player.triggerHeld=false; }
+      else if(performance.now()-downAt<260&&travel<16){ tapAt=performance.now(); tapX=downX; tapY=downY; }
+    });
 
   function bind(id,down,up){
     const el=$(id);
@@ -6211,9 +6265,6 @@ const touchUI=(()=>{
     for(const ev of ['pointerup','pointercancel','lostpointercapture']) el.addEventListener(ev,release);
     el.addEventListener('contextmenu',e=>e.preventDefault());
   }
-  bind('#tFire',
-    ()=>{ if(!play()) return; mouse.left=true; player.triggerHeld=true; player.triggerQueued=true; },
-    ()=>{ mouse.left=false; player.triggerHeld=false; });
   bind('#tJump',()=>{keys.Space=true;},()=>{keys.Space=false;});
   bind('#tAim',()=>{ mouse.right=!mouse.right; $('#tAim').classList.toggle('on',mouse.right); });
   bind('#tCrouch',()=>{ keys.KeyC=!keys.KeyC; $('#tCrouch').classList.toggle('on',!!keys.KeyC); });
@@ -6223,6 +6274,7 @@ const touchUI=(()=>{
 
   function reset(){
     resetStick(); lookId=null;
+    firingPad=false;
     mouse.left=false; mouse.right=false; player.triggerHeld=false; player.triggerQueued=false;
     keys.Space=false; keys.KeyC=false;
     $('#tAim').classList.remove('on');
@@ -6369,7 +6421,7 @@ function animate(){
 animate();
 
 /* debugging / automation hook */
-window.__VOXEL={player,bots,WEAPONS,MATS,game,camera,scene,renderer,THREE,tracerMesh,tracers,touchMove,touchUI,solidAtWorld,boxBlocked,supportAt,terrainAt,moveCapsule,worldBlocked,cellMap,ddaRay,ddaFine,carveWorldRay,carveWorldSphere,traceBodies,findPath,SPAWNS,findOpenSpawn,updateNavDirty,corpses,NAV,shafts,staticShaftSpecs,voxelBits,fallChunks,bloodCells,addBloodFloor,detachUnsupported,spawnSmokeParticle,destroyCell,wetWorldAt,wallSplat,spawnBlood,checkSoloEnd,killPlayer,killBot,get cellCount(){return cellMap.size;},get bloodCount(){return bloodCells.size;},get fineNext(){return fineNext;},get nowT(){return nowT;},
+window.__VOXEL={player,bots,WEAPONS,MATS,game,camera,scene,renderer,THREE,tracerMesh,tracers,touchMove,touchUI,AudioSys,solidAtWorld,boxBlocked,supportAt,terrainAt,moveCapsule,worldBlocked,cellMap,ddaRay,ddaFine,carveWorldRay,carveWorldSphere,traceBodies,findPath,SPAWNS,findOpenSpawn,updateNavDirty,corpses,NAV,shafts,staticShaftSpecs,voxelBits,fallChunks,bloodCells,addBloodFloor,detachUnsupported,spawnSmokeParticle,destroyCell,wetWorldAt,wallSplat,spawnBlood,checkSoloEnd,killPlayer,killBot,get cellCount(){return cellMap.size;},get bloodCount(){return bloodCells.size;},get fineNext(){return fineNext;},get nowT(){return nowT;},
   start(){beginMatch(false);},newMap(){beginMatch(true);},fire:fireWeapon,switchWeapon,damageBot,damagePlayer,killPlayer,traceShot,props,breakProp,damageProps,collideProps,
   setPaused(v){game.paused=v;},lock(){requestLock();},pause:pauseGame,resume:resumeGame,
   look(yaw,pitch){player.yaw=yaw;player.pitch=pitch;},teleport(x,z){player.pos.set(x,0,z);},
