@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>КРОВАВЫЙ ОСОБНЯК — воксельный FPS</title>
 <style>
   :root{
@@ -221,6 +221,77 @@
     #leaders{display:none}#weapons{bottom:82px}#killfeed{width:240px}
     #healthNum{font-size:46px}#ammoNum{font-size:50px}
   }
+
+  /* ---------- touch controls (phones / tablets) ---------- */
+  html.touch, html.touch body{position:fixed;inset:0;width:100%;height:100%;overflow:hidden;
+    overscroll-behavior:none;touch-action:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
+  html.touch canvas{touch-action:none}
+  #touch{position:fixed;inset:0;z-index:14;display:none;pointer-events:none}
+  #touch.on{display:block}
+  #tLook{position:absolute;inset:0;pointer-events:auto;touch-action:none}
+  #tStick{position:absolute;left:calc(16px + env(safe-area-inset-left,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));
+    width:132px;height:132px;border-radius:50%;pointer-events:auto;touch-action:none;
+    border:1px solid rgba(255,255,255,.3);background:radial-gradient(circle,rgba(20,20,24,.42),rgba(0,0,0,.5));
+    box-shadow:0 3px 14px rgba(0,0,0,.3)}
+  #tStick i{position:absolute;left:50%;top:50%;width:58px;height:58px;margin:-29px 0 0 -29px;border-radius:50%;
+    border:2px solid rgba(255,106,42,.85);background:rgba(255,106,42,.34);box-shadow:0 0 20px rgba(255,106,42,.3)}
+  .tbtn{position:absolute;pointer-events:auto;touch-action:none;appearance:none;-webkit-appearance:none;padding:0;margin:0;
+    display:flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:50%;overflow:hidden;
+    border:1px solid rgba(255,255,255,.32);background:rgba(8,8,11,.58);color:#f0e8d8;
+    font:600 10px/1.1 var(--mono);letter-spacing:.06em;text-shadow:0 1px 3px #000;
+    box-shadow:0 3px 12px rgba(0,0,0,.35)}
+  .tbtn.press{background:rgba(255,106,42,.8);border-color:#ffb083;color:#1a0a04;text-shadow:none}
+  .tbtn.on{border-color:#ffa870;box-shadow:inset 0 0 18px rgba(255,106,42,.45),0 3px 12px rgba(0,0,0,.35);color:#ffd2b9}
+  #tFire{right:calc(18px + env(safe-area-inset-right,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));
+    width:92px;height:92px;font-size:11px;background:rgba(132,16,10,.55);border-color:rgba(255,120,70,.7)}
+  #tAim{right:calc(24px + env(safe-area-inset-right,0px));bottom:calc(122px + env(safe-area-inset-bottom,0px));width:64px;height:64px;font-size:15px}
+  #tJump{right:calc(124px + env(safe-area-inset-right,0px));bottom:calc(92px + env(safe-area-inset-bottom,0px));font-size:15px}
+  #tReload{right:calc(124px + env(safe-area-inset-right,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px))}
+  #tSwitch{right:calc(194px + env(safe-area-inset-right,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));width:52px;height:52px}
+  #tCrouch{right:calc(194px + env(safe-area-inset-right,0px));bottom:calc(84px + env(safe-area-inset-bottom,0px));width:52px;height:52px}
+  #tPause{left:calc(12px + env(safe-area-inset-left,0px));top:calc(10px + env(safe-area-inset-top,0px));
+    width:44px;height:44px;z-index:2;font-size:13px}
+  #tSwitch,#tCrouch,#tReload{font-size:9px;letter-spacing:.02em}
+  #tRotate{display:none;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+    background:rgba(4,4,6,.86);text-align:center;padding:26px}
+  #tRotate b{font:600 22px/1.1 var(--display);letter-spacing:.05em;text-transform:uppercase}
+  #tRotate span{font:10px/1.7 var(--mono);letter-spacing:.16em;color:#9a9184;text-transform:uppercase;max-width:280px}
+  @media (orientation:portrait){
+    #touch.on #tLook,#touch.on #tStick,#touch.on .tbtn:not(#tPause){display:none}
+    #touch.on #tRotate{display:flex}
+  }
+  #touch.dead #tLook,#touch.dead #tStick,#touch.dead .tbtn{opacity:0;pointer-events:none}
+  #touch.dead #tPause{opacity:.5;pointer-events:auto}
+
+  /* HUD переезжает из-под пальцев: виталы и патроны вверх, слоты скрыты */
+  html.touch #vitals{left:16px;bottom:calc(160px + env(safe-area-inset-bottom,0px));gap:8px;transform:scale(.82);transform-origin:left bottom}
+  html.touch #healthCross{width:36px;height:36px}
+  html.touch #healthCross:before{left:14px;top:0;width:7px;height:36px}
+  html.touch #healthCross:after{top:14px;left:0;height:7px;width:36px}
+  html.touch #healthNum{font-size:42px}
+  html.touch #healthBar{width:110px}
+  html.touch #ammoBox{right:calc(14px + env(safe-area-inset-right,0px));top:calc(12px + env(safe-area-inset-top,0px));bottom:auto}
+  html.touch #ammoNum{font-size:40px;line-height:1}
+  html.touch #ammoNum small{font-size:15px;margin-left:5px}
+  html.touch #ammoName{font-size:8px;margin-top:3px}
+  html.touch #reloadBar{width:112px;margin-top:5px}
+  html.touch #weapons,html.touch #leaders,html.touch #killsSelf{display:none}
+  html.touch #topbar{top:calc(6px + env(safe-area-inset-top,0px));min-width:0;padding:4px 16px 5px;max-width:56vw}
+  html.touch #topbar .mode{font-size:7px;letter-spacing:.16em}
+  html.touch #topbar .limit{font-size:14px}
+  html.touch #killfeed{top:calc(82px + env(safe-area-inset-top,0px));right:calc(14px + env(safe-area-inset-right,0px));width:190px}
+  html.touch .feed{font-size:10px;padding:3px 7px}
+  html.touch #adsBlur{display:none}
+  html.touch #fps{font-size:8px;bottom:2px}
+  html.touch .card{max-height:calc(100dvh - 16px);padding:22px 18px 18px}
+  html.touch .btn{padding:15px 20px}
+  html.touch .btnrow .btn{flex:1 1 auto}
+  html.touch .seg{gap:5px}
+  html.touch .seg button{padding:11px 10px;min-width:40px;font-size:12px}
+  html.touch .check{padding:7px 0;font-size:11px;margin-bottom:10px}
+  html.touch .check input{width:20px;height:20px}
+  html.touch .check input:checked:after{left:6px;top:2px;width:5px;height:10px}
+  html.touch .hint{font-size:11px;line-height:1.8}
 </style>
 </head>
 <body>
@@ -267,6 +338,18 @@
     <div class="foot">TAB — ЗАКРЫТЬ // МАТЧ ИДЁТ ДО ЛИМИТА ОЧКОВ</div>
   </div>
 </div>
+<div id="touch">
+  <div id="tLook"></div>
+  <div id="tStick"><i></i></div>
+  <div id="tRotate"><b>Поверните устройство</b><span>Горизонтально целиться и двигаться удобнее</span></div>
+  <button type="button" tabindex="-1" class="tbtn" id="tPause">II</button>
+  <button type="button" tabindex="-1" class="tbtn" id="tSwitch">СМЕНА</button>
+  <button type="button" tabindex="-1" class="tbtn" id="tCrouch">ПРИСЕД</button>
+  <button type="button" tabindex="-1" class="tbtn" id="tReload">ПЕРЕЗАР.</button>
+  <button type="button" tabindex="-1" class="tbtn" id="tJump">↑</button>
+  <button type="button" tabindex="-1" class="tbtn" id="tAim">⌖</button>
+  <button type="button" tabindex="-1" class="tbtn" id="tFire">ОГОНЬ</button>
+</div>
 <div id="adsBlur"></div>
 <div id="fps"></div>
 <div id="overlay"></div>
@@ -302,8 +385,14 @@ function srange(a,b){ return a+srand()*(b-a); }
 function spick(a){ return a[Math.floor(srand()*a.length)]; }
 
 /* ---------- renderer / scene ---------- */
-const renderer = new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
-renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.6));
+/* touch: coarse pointer or any touchscreen; ?touch=1 / ?touch=0 forces the mode (testing) */
+const touchParam=new URLSearchParams(location.search).get('touch');
+const touchMode=touchParam==='1'||(touchParam!=='0'&&(matchMedia('(pointer:coarse)').matches||navigator.maxTouchPoints>0));
+if(touchMode) document.documentElement.classList.add('touch');
+/* mobile GPUs: no MSAA and no retina overdraw by default */
+const PR_CAP=touchMode?1:1.6;
+const renderer = new THREE.WebGLRenderer({antialias:!touchMode,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio||1,PR_CAP));
 renderer.setSize(innerWidth,innerHeight);
 renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -325,7 +414,7 @@ let nowT = 0;
 let fpsEMA=90;
 /* adaptive resolution applies fixed tiers, at most once per second (resizing every
    frame reallocates the canvas + composer framebuffers and costs more than it saves) */
-let appliedPR=Math.min(devicePixelRatio||1,1.6), prCooldown=1;
+let appliedPR=Math.min(devicePixelRatio||1,PR_CAP), prCooldown=1;
 
 addEventListener('resize',()=>{
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -5433,11 +5522,13 @@ function updatePlayer(dt){
   if(keys.KeyS){mx-=fwd.x;mz-=fwd.z}
   if(keys.KeyD){mx+=right.x;mz+=right.z}
   if(keys.KeyA){mx-=right.x;mz-=right.z}
+  if(touchMove.x||touchMove.y){mx+=fwd.x*touchMove.y+right.x*touchMove.x;mz+=fwd.z*touchMove.y+right.z*touchMove.x;}
   const ml=Math.hypot(mx,mz);
-  if(ml>0){mx/=ml;mz/=ml;}
+  let mlen=1;
+  if(ml>0){mlen=Math.min(1,ml);mx/=ml;mz/=ml;}
   const accel=player.grounded?14:3.2;
-  player.vel.x=damp(player.vel.x,mx*speed,accel,dt);
-  player.vel.z=damp(player.vel.z,mz*speed,accel,dt);
+  player.vel.x=damp(player.vel.x,mx*speed*mlen,accel,dt);
+  player.vel.z=damp(player.vel.z,mz*speed*mlen,accel,dt);
   const px0=player.pos.x,pz0=player.pos.z;
   moveCapsule(player.pos,player.vel.x*dt,player.vel.z*dt,.30,h);
   /* антизастревание: если игрок упёрся в угол и не двигается — мягко сдвигаем вдоль него */
@@ -5547,6 +5638,7 @@ function cacheSlotEls(){
 }
 function updatePlayerUi(dt){
   updateDamageDirs(dt);
+  if(touchMode) touchUI.update();
   const cw=currentWeapon();
   if(player.alive){
     const hp=Math.round(player.health);
@@ -5576,7 +5668,7 @@ function updatePlayerUi(dt){
     const spread=playerSpread();
     /* реальный угловой разброс -> диаметр круга на экране под текущий FOV */
     const ppu=(window.innerHeight*.5)/Math.tan(camera.fov*Math.PI/360);
-    HUD.crosshair.style.setProperty('--ring',clamp(spread*2*ppu,6,260).toFixed(1)+'px');
+    HUD.crosshair.style.setProperty('--ring',clamp(spread*2*ppu,touchMode?12:6,260).toFixed(1)+'px');
     const showCross=crosshairOn&&!((cw.scope&&player.ads>.70)||player.ads>.55);
     HUD.crosshair.style.display=crosshairOn?'block':'none';
     HUD.crosshair.style.opacity=showCross?'.95':'0';
@@ -5605,6 +5697,8 @@ function updatePlayerUi(dt){
    ============================================================ */
 const keys={};
 const mouse={left:false,right:false};
+/* аналоговый стик: x — вправо, y — вперёд, длина 0..1 */
+const touchMove={x:0,y:0};
 let scoreboardOpen=false;
 let fullscreenPref=true;
 let crosshairOn=true;
@@ -5740,7 +5834,10 @@ function updateMenuCamera(dt){
 
 function showMenu(mode,winner){
   const overlay=$('#overlay'); overlay.classList.remove('hide');
-  const hint=`<p class="hint"><b>WASD</b> движение · <b>SHIFT</b> бег · <b>ЛКМ</b> огонь · <b>ПКМ</b> прицел · <b>R</b> перезарядка · <b>1</b> пистолет · <b>2</b> основное · <b>Q</b>/<b>КОЛЕСО</b> смена · <b>ПРОБЕЛ</b> прыжок · <b>C</b> присед · <b>TAB</b> таблица · <b>ESC</b> пауза</p>`;
+  touchUI.show(false);
+  const hint=touchMode
+    ? `<p class="hint"><b>ЛЕВЫЙ СТИК</b> движение · <b>ПРАВЫЙ ЭКРАН</b> обзор · <b>ОГОНЬ</b> стрельба · <b>⌖</b> прицел · <b>II</b> пауза</p>`
+    : `<p class="hint"><b>WASD</b> движение · <b>SHIFT</b> бег · <b>ЛКМ</b> огонь · <b>ПКМ</b> прицел · <b>R</b> перезарядка · <b>1</b> пистолет · <b>2</b> основное · <b>Q</b>/<b>КОЛЕСО</b> смена · <b>ПРОБЕЛ</b> прыжок · <b>C</b> присед · <b>TAB</b> таблица · <b>ESC</b> пауза</p>`;
   const fsRow=`<label class="check"><input type="checkbox" id="fullscreenPick" ${fullscreenPref?'checked':''}><span>В полном экране</span><em>ESC / F11 — выйти</em></label>`;
   const crossRow=`<label class="check"><input type="checkbox" id="crosshairPick" ${crosshairOn?'checked':''}><span>ОБЫЧНЫЙ ПРИЦЕЛ</span><em>ПЕРЕКРЕСТИЕ В ИГРЕ</em></label>`;
   const traceRow=`<label class="check"><input type="checkbox" id="tracersPick" ${tracersOn?'checked':''}><span>ТРАССЕРА</span><em>ПУЛЕМЁТ: КАЖДЫЙ 5-Й ЗЕЛЁНЫЙ</em></label>`;
@@ -5834,7 +5931,7 @@ function showMenu(mode,winner){
   </div>`;
 }
 
-function hideOverlay(){ $('#overlay').classList.add('hide'); if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); }
+function hideOverlay(){ $('#overlay').classList.add('hide'); if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); touchUI.show(true); }
 function refreshDeathClasses(){
   document.querySelectorAll('#deathClasses [data-class]').forEach(b=>b.classList.toggle('on',+b.dataset.class===player.nextPrimary));
 }
@@ -5851,6 +5948,7 @@ function pauseGame(){
   setScope(false); showMenu('pause');
 }
 function requestLock(){
+  if(touchMode) return;
   try{ const p=renderer.domElement.requestPointerLock(); if(p&&p.catch)p.catch(()=>{}); }catch(e){}
 }
 function applyFullscreen(on){
@@ -6031,6 +6129,7 @@ addEventListener('wheel',e=>{
   toggleSidearm();
 },{passive:true});
 renderer.domElement.addEventListener('click',()=>{
+  if(touchMode) return;
   if(game.started&&!game.over&&!game.paused&&player.alive&&document.pointerLockElement!==renderer.domElement) requestLock();
 });
 document.addEventListener('pointerlockchange',()=>{
@@ -6038,9 +6137,106 @@ document.addEventListener('pointerlockchange',()=>{
   if(locked){
     if(game.started&&!game.over){game.paused=false;hideOverlay();}
   }else{
-    if(game.started&&!game.over&&!game.paused&&player.alive) pauseGame();
+    if(!touchMode&&game.started&&!game.over&&!game.paused&&player.alive) pauseGame();
   }
 });
+
+/* ---------- touch controls ---------- */
+const touchUI=(()=>{
+  if(!touchMode) return {show(){},reset(){},update(){}};
+  const root=$('#touch'), stick=$('#tStick'), knob=stick.querySelector('i'), lookPad=$('#tLook');
+  const play=()=>game.started&&!game.paused&&!game.over&&player.alive;
+  const R=44, DEAD=.16;
+  let stickId=null, lookId=null, lookX=0, lookY=0;
+
+  const stick0=()=>{knob.style.transform='translate(0,0)';touchMove.x=touchMove.y=0;};
+  function setStick(cx,cy){
+    const d=Math.hypot(cx,cy);
+    if(d<2){stick0();return;}
+    const ux=cx/d, uy=cy/d, reach=Math.min(d,R), s=reach/R;
+    knob.style.transform=`translate(${(ux*reach).toFixed(1)}px,${(uy*reach).toFixed(1)}px)`;
+    touchMove.x=s<DEAD?0:ux*s;
+    touchMove.y=s<DEAD?0:-uy*s;
+  }
+  const resetStick=()=>{stickId=null;stick0();};
+
+  stick.addEventListener('pointerdown',e=>{
+    if(stickId!==null) return;
+    stickId=e.pointerId;
+    try{stick.setPointerCapture(e.pointerId);}catch(err){}
+    const r=stick.getBoundingClientRect();
+    setStick(e.clientX-r.left-r.width/2,e.clientY-r.top-r.height/2);
+    e.preventDefault();
+  });
+  stick.addEventListener('pointermove',e=>{
+    if(e.pointerId!==stickId) return;
+    const r=stick.getBoundingClientRect();
+    setStick(e.clientX-r.left-r.width/2,e.clientY-r.top-r.height/2);
+    e.preventDefault();
+  });
+  for(const ev of ['pointerup','pointercancel','lostpointercapture'])
+    stick.addEventListener(ev,e=>{ if(e.pointerId===stickId) resetStick(); });
+
+  /* правый палец — обзор, ровно та же логика, что у мыши */
+  lookPad.addEventListener('pointerdown',e=>{
+    if(lookId!==null) return;
+    lookId=e.pointerId; lookX=e.clientX; lookY=e.clientY;
+    try{lookPad.setPointerCapture(e.pointerId);}catch(err){}
+    e.preventDefault();
+  });
+  lookPad.addEventListener('pointermove',e=>{
+    if(e.pointerId!==lookId) return;
+    const dx=clamp(e.clientX-lookX,-170,170), dy=clamp(e.clientY-lookY,-170,170);
+    lookX=e.clientX; lookY=e.clientY;
+    if(!play()) return;
+    const sens=.0026*(player.ads>.6&&currentWeapon().scope?.4:1);
+    player.yaw-=dx*sens;
+    player.pitch=clamp(player.pitch-dy*sens,-1.47,1.47);
+    player.swayX=clamp(player.swayX-dx*.00035,-.045,.045);
+    player.swayY=clamp(player.swayY+dy*.00035,-.045,.045);
+  });
+  for(const ev of ['pointerup','pointercancel','lostpointercapture'])
+    lookPad.addEventListener(ev,e=>{ if(e.pointerId===lookId) lookId=null; });
+
+  function bind(id,down,up){
+    const el=$(id);
+    const press=e=>{
+      e.preventDefault(); e.stopPropagation();
+      el.classList.add('press');
+      try{el.setPointerCapture(e.pointerId);}catch(err){}
+      if(down) down();
+    };
+    const release=()=>{el.classList.remove('press'); if(up) up();};
+    el.addEventListener('pointerdown',press);
+    for(const ev of ['pointerup','pointercancel','lostpointercapture']) el.addEventListener(ev,release);
+    el.addEventListener('contextmenu',e=>e.preventDefault());
+  }
+  bind('#tFire',
+    ()=>{ if(!play()) return; mouse.left=true; player.triggerHeld=true; player.triggerQueued=true; },
+    ()=>{ mouse.left=false; player.triggerHeld=false; });
+  bind('#tJump',()=>{keys.Space=true;},()=>{keys.Space=false;});
+  bind('#tAim',()=>{ mouse.right=!mouse.right; $('#tAim').classList.toggle('on',mouse.right); });
+  bind('#tCrouch',()=>{ keys.KeyC=!keys.KeyC; $('#tCrouch').classList.toggle('on',!!keys.KeyC); });
+  bind('#tReload',()=>{ if(play()) startReload(); });
+  bind('#tSwitch',()=>{ if(play()) toggleSidearm(); });
+  bind('#tPause',()=>{ pauseGame(); });
+
+  function reset(){
+    resetStick(); lookId=null;
+    mouse.left=false; mouse.right=false; player.triggerHeld=false; player.triggerQueued=false;
+    keys.Space=false; keys.KeyC=false;
+    $('#tAim').classList.remove('on');
+    $('#tCrouch').classList.remove('on');
+  }
+  function show(on){
+    const live=!!on&&game.started&&!game.over;
+    root.classList.toggle('on',live);
+    if(!live) reset();
+  }
+  function update(){ root.classList.toggle('dead',!player.alive); }
+
+  return {show,reset,update};
+})();
 $('#overlay').addEventListener('change',e=>{
   if(e.target.id==='fullscreenPick') fullscreenPref=e.target.checked;
   else if(e.target.id==='crosshairPick'){
@@ -6148,7 +6344,7 @@ function animate(){
   prCooldown-=dt;
   if(prCooldown<=0){
     prCooldown=1;
-    const dpr=Math.min(devicePixelRatio||1,1.6);
+    const dpr=Math.min(devicePixelRatio||1,PR_CAP);
     const wantPR=Math.min(dpr,fpsEMA>110?1.5:(fpsEMA>75?1.2:(fpsEMA>55?1.0:(fpsEMA>40?.85:.7))));
     if(Math.abs(wantPR-appliedPR)>.05){
       appliedPR=wantPR;
@@ -6173,7 +6369,7 @@ function animate(){
 animate();
 
 /* debugging / automation hook */
-window.__VOXEL={player,bots,WEAPONS,MATS,game,camera,scene,renderer,THREE,tracerMesh,tracers,solidAtWorld,boxBlocked,supportAt,terrainAt,moveCapsule,worldBlocked,cellMap,ddaRay,ddaFine,carveWorldRay,carveWorldSphere,traceBodies,findPath,SPAWNS,findOpenSpawn,updateNavDirty,corpses,NAV,shafts,staticShaftSpecs,voxelBits,fallChunks,bloodCells,addBloodFloor,detachUnsupported,spawnSmokeParticle,destroyCell,wetWorldAt,wallSplat,spawnBlood,checkSoloEnd,killPlayer,killBot,get cellCount(){return cellMap.size;},get bloodCount(){return bloodCells.size;},get fineNext(){return fineNext;},get nowT(){return nowT;},
+window.__VOXEL={player,bots,WEAPONS,MATS,game,camera,scene,renderer,THREE,tracerMesh,tracers,touchMove,touchUI,solidAtWorld,boxBlocked,supportAt,terrainAt,moveCapsule,worldBlocked,cellMap,ddaRay,ddaFine,carveWorldRay,carveWorldSphere,traceBodies,findPath,SPAWNS,findOpenSpawn,updateNavDirty,corpses,NAV,shafts,staticShaftSpecs,voxelBits,fallChunks,bloodCells,addBloodFloor,detachUnsupported,spawnSmokeParticle,destroyCell,wetWorldAt,wallSplat,spawnBlood,checkSoloEnd,killPlayer,killBot,get cellCount(){return cellMap.size;},get bloodCount(){return bloodCells.size;},get fineNext(){return fineNext;},get nowT(){return nowT;},
   start(){beginMatch(false);},newMap(){beginMatch(true);},fire:fireWeapon,switchWeapon,damageBot,damagePlayer,killPlayer,traceShot,props,breakProp,damageProps,collideProps,
   setPaused(v){game.paused=v;},lock(){requestLock();},pause:pauseGame,resume:resumeGame,
   look(yaw,pitch){player.yaw=yaw;player.pitch=pitch;},teleport(x,z){player.pos.set(x,0,z);},
