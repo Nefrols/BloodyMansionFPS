@@ -825,6 +825,8 @@ const MATS = {
   dirt:    {color:0x3e3325, cost:1.0, debris:0x584834, rough:1,    dur:2},
   grass:   {color:0x455a2e, cost:.8,  debris:0x596d3b, rough:1,    dur:2},
   moss:    {color:0x26301e, cost:1.0, debris:0x3a4528, rough:1,    dur:2},
+  /* листва и кусты: пуля и шаг проходят насквозь, вес и опора только у твёрдых клеток */
+  leaf:    {color:0x26301e, cost:.3,  debris:0x3a4528, rough:1,    dur:1, soft:true},
   wood:    {color:0x4a2f20, cost:1.0, debris:0x63422a, rough:.9,   dur:3},
   plaster: {color:0xaaa08f, cost:1.0, debris:0xb6ab97, rough:.98,  dur:3},
   darkwood:{color:0x261812, cost:1.0, debris:0x38241a, rough:.88,  dur:4},
@@ -902,10 +904,19 @@ function subdivideCell(cell){
 }
 
 function keyOf(x,y,z){ return ((x+256)*512 + (y+256))*512 + (z+256); }
+/* воксели одного дерева/куста: чужая крона их не держит */
+let nextTree=1, buildTree=0;
+const treeCells=new Map();
 function addCell(cx,cy,cz,mat){
   const k=keyOf(cx,cy,cz);
   if(cellMap.has(k)) return null;
   const c={x:cx,y:cy,z:cz,mat:typeof mat==='string'?MATS[mat]:mat,alive:true,i:-1,mesh:null,sub:null,hidden:false,wet:false,soot:0};
+  if(buildTree){
+    c.tree=buildTree;
+    let bag=treeCells.get(buildTree);
+    if(!bag){bag=new Set();treeCells.set(buildTree,bag);}
+    bag.add(c);
+  }
   cellMap.set(k,c); buildCells.push(c); return c;
 }
 function fill(cx0,cy0,cz0,cx1,cy1,cz1,mat){
@@ -999,7 +1010,7 @@ function finalizeWorld(){
       const c=list[n]; c.i=n; c.mesh=mesh;
       tmpMat4.makeTranslation((c.x+.5)*S,(c.y+.5)*S,(c.z+.5)*S);
       mesh.setMatrixAt(n,tmpMat4);
-      const soft=(c.mat.id==='grass'||c.mat.id==='dirt'||c.mat.id==='moss');
+      const soft=(c.mat.id==='grass'||c.mat.id==='dirt'||c.mat.id==='moss'||c.mat.id==='leaf');
       const lj=(c.mat.id==='metal'||c.mat.id==='slate'||c.mat.id==='darkwood')?.018:.045;
       tmpColor.setHex(c.mat.color).offsetHSL(srange(soft?-.002:-.006,soft?.002:.006),srange(soft?-.006:-.02,soft?.006:.02),srange(soft?-.01:-lj,soft?.01:lj));
       if(c.jl===undefined) c.jl=srange(-.045,.045);
@@ -1118,6 +1129,7 @@ function carveWorldSphere(p,radius){
   const r=Math.ceil(radius/S)+1;
   const cx=Math.floor(p.x/S),cy=Math.floor(p.y/S),cz=Math.floor(p.z/S);
   let removed=0;
+  const holes=[];
   const r2=radius*radius;
   for(let x=cx-r;x<=cx+r;x++)for(let y=cy-r;y<=cy+r;y++)for(let z=cz-r;z<=cz+r;z++){
     const c=cellMap.get(keyOf(x,y,z));
@@ -1126,16 +1138,18 @@ function carveWorldSphere(p,radius){
     if(dx*dx+dy*dy+dz*dz<=r2){
       if(destroyCell(c)){
         removed++;
+        holes.push(c);
         if(Math.random()<.55) spawnDebris(new V3((x+.5)*S,(y+.5)*S,(z+.5)*S),c.mat.debris,1);
       }
     }
   }
+  if(holes.length) detachUnsupported(p,radius,holes);
   damageProps(p,radius,60);
   return removed;
 }
 function solidAtWorld(x,y,z){
   const c=cellMap.get(keyOf(Math.floor(x/S),Math.floor(y/S),Math.floor(z/S)));
-  return !!(c&&c.alive);
+  return !!(c&&c.alive&&!c.mat.soft);
 }
 /* высота шага: на неё игрок и боты поднимаются без прыжка (0.5 м = один воксель) */
 const STEP_UP=.55;
@@ -1146,7 +1160,7 @@ function boxBlocked(x,z,r,h,y=0){
   const y0=Math.floor((y+STEP_UP)/S),y1=Math.floor((y+h-.02)/S);
   for(let ix=x0;ix<=x1;ix++)for(let iy=y0;iy<=y1;iy++)for(let iz=z0;iz<=z1;iz++){
     const c=cellMap.get(keyOf(ix,iy,iz));
-    if(c&&c.alive) return true;
+    if(c&&c.alive&&!c.mat.soft) return true;
   }
   return false;
 }
@@ -1156,7 +1170,7 @@ function supportAt(x,z,y,down=.3,up=STEP_UP){
   const i0=Math.floor((y+up)/S),i1=Math.floor((y-down)/S);
   for(let iy=i0;iy>=i1;iy--){
     const c=cellMap.get(keyOf(ix,iy,iz));
-    if(c&&c.alive) return (iy+1)*S;
+    if(c&&c.alive&&!c.mat.soft) return (iy+1)*S;
   }
   return null;
 }
@@ -1247,7 +1261,7 @@ function worldBlocked(a,b){
   if(dist<.01) return false;
   dir.divideScalar(dist);
   let blocked=false;
-  ddaRay(a,dir,dist,(c,t,p)=>{ blocked=true; return false; });
+  ddaRay(a,dir,dist,(c)=>{ if(c.mat.soft) return true; blocked=true; return false; });
   return blocked;
 }
 
@@ -1418,24 +1432,28 @@ function chair(x,z,rot=0){
   regProp(g,x,z,{r:.36,bot:-.1,topY:.95,hp:25,solid:true,mat:'darkwood'});
 }
 function hedge(x0,z0,x1,z1,h=1.25){
-  fillW(Math.min(x0,x1),0,Math.min(z0,z1),Math.max(x0,x1),h,Math.max(z0,z1),'moss');
+  const prev=buildTree; buildTree=nextTree++;
+  fillW(Math.min(x0,x1),0,Math.min(z0,z1),Math.max(x0,x1),h,Math.max(z0,z1),'leaf');
   for(let i=0;i<((Math.abs(x1-x0)+Math.abs(z1-z0))*4);i++){
     const x=srange(Math.min(x0,x1),Math.max(x0,x1)),z=srange(Math.min(z0,z1),Math.max(z0,z1));
     const c=cellMap.get(keyOf(Math.floor(x/S),Math.floor(srange(h*.5,h+.45)/S),Math.floor(z/S)));
-    if(c)c.mat=MATS.moss;
+    if(c&&c.mat.soft)c.mat=MATS.leaf;
   }
+  buildTree=prev;
 }
 function leafyTree(x,z,size=1){
+  const prev=buildTree; buildTree=nextTree++;
   const h=rnd(4.2,6.2)*size;
   fillW(x-.2,0,z-.2,x+.2,h,z+.2,'darkwood');
   for(let i=0;i<26;i++){
     const a=srand()*TAU,r=srange(.45,2.1)*size,py=srange(h*.62,h*1.02);
-    fillW(x+Math.cos(a)*r-.25,py,z+Math.sin(a)*r-.25,x+Math.cos(a)*r+.25,py+srange(.35,.8),z+Math.sin(a)*r+.25,'moss');
+    fillW(x+Math.cos(a)*r-.25,py,z+Math.sin(a)*r-.25,x+Math.cos(a)*r+.25,py+srange(.35,.8),z+Math.sin(a)*r+.25,'leaf');
   }
   for(let i=0;i<9;i++){
     const a=srand()*TAU,y=srange(h*.55,h*.95),len=srange(.5,1.5)*size;
     for(let t=0;t<len;t+=.25) fillW(x+Math.cos(a)*t-.1,y+t*.4,z+Math.sin(a)*t-.1,x+Math.cos(a)*t+.1,y+t*.4+.2,z+Math.sin(a)*t+.1,'darkwood');
   }
+  buildTree=prev;
 }
 const staticShaftSpecs=[];
 function addShaftSpec(x,y,z,width,length,strength=1){
@@ -1550,6 +1568,7 @@ function voxSphere(cx,cy,cz,r,mat,shell=0,hole=0){
 
 /* forest tree: thick = 4 big voxels across, thin = 1 */
 function tree(x,z,thick){
+  const prev=buildTree; buildTree=nextTree++;
   const base=terrainH(x,z);
   const bx=Math.floor(x/S),bz=Math.floor(z/S),by=Math.floor(base/S);
   const h=thick?rnd(9,13):rnd(6,9.5);
@@ -1568,17 +1587,20 @@ function tree(x,z,thick){
     for(let t=0;t<=len;t+=.5){
       voxSphere(x+Math.cos(a)*t,sy+t*.5,z+Math.sin(a)*t,.2,'wood');
     }
-    voxSphere(x+Math.cos(a)*(len+.5),sy+len*.5+.3,z+Math.sin(a)*(len+.5),rnd(1.3,2.1),'moss',.5,.24);
+    voxSphere(x+Math.cos(a)*(len+.5),sy+len*.5+.3,z+Math.sin(a)*(len+.5),rnd(1.3,2.1),'leaf',.5,.24);
   }
   const crowns=thick?3:2;
   for(let i=0;i<crowns;i++){
     const a=rnd(0,TAU),rr=rnd(0,1.2);
-    voxSphere(x+Math.cos(a)*rr,topY+rnd(-.2,1.0),z+Math.sin(a)*rr,rnd(1.4,2.2),'moss',.5,.28);
+    voxSphere(x+Math.cos(a)*rr,topY+rnd(-.2,1.0),z+Math.sin(a)*rr,rnd(1.4,2.2),'leaf',.5,.28);
   }
+  buildTree=prev;
 }
 function bush(x,z,r=.9){
+  const prev=buildTree; buildTree=nextTree++;
   const y=terrainH(x,z);
-  voxSphere(x,y+r*.55,z,r,'moss',.45,.2);
+  voxSphere(x,y+r*.55,z,r,'leaf',.45,.2);
+  buildTree=prev;
 }
 function boulder(x,z,r=1.4){
   const y=terrainH(x,z);
@@ -1890,7 +1912,7 @@ function buildForest(){
 
 function buildWorld(){
   for(const p of props) if(p.physBody&&p.physBody.world) physWorld.removeBody(p.physBody);
-  cellMap.clear(); buildCells=[]; worldMeshes.length=0; mapLights=[]; staticShaftSpecs.length=0; REAL_LIGHT_BUDGET=0; props.length=0;
+  cellMap.clear(); treeCells.clear(); nextTree=1; buildTree=0; buildCells=[]; worldMeshes.length=0; mapLights=[]; staticShaftSpecs.length=0; REAL_LIGHT_BUDGET=0; props.length=0;
   disposeMapGroup(); revealMesh=null; revealNext=0; resetFineVoxels(); clearVoxelBits(); clearFallChunks(); clearBlood(); clearSmoke();
   SEED=(SEED*1664525+1013904223)>>>0;
   SPAWNS.length=0;
@@ -2335,112 +2357,313 @@ function updateVoxelBits(dt){
   if(dirty)voxelBitMesh.instanceMatrix.needsUpdate=true;
 }
 
-/* --- rigid chunks of voxels that lost their support --- */
+/* --- куски, потерявшие опору: твёрдые клетки — тело, листва только рисуется --- */
 const fallChunks=[];
+const NB6=[[1,0,0],[-1,0,0],[0,0,1],[0,0,-1],[0,1,0],[0,-1,0]]; /* вниз последний: его снимут со стека первым */
+let supGen=1;
+function isStruct(c){ return !!(c&&c.alive&&c.mat&&!c.mat.soft); }
+function cellAt(x,y,z){ return cellMap.get(keyOf(x,y,z)); }
 function hideCellRecord(c){
   if(!c||!c.alive) return;
+  if(c.sub){
+    for(const sv of c.sub){ if(sv.alive){ sv.alive=false; fineRelease(sv.index); } }
+    fineMesh.instanceMatrix.needsUpdate=true;
+  }
   c.alive=false;
   cellMap.delete(keyOf(c.x,c.y,c.z));
   if(c.mesh&&!c.hidden){c.mesh.setMatrixAt(c.i,zeroMat);c.mesh.instanceMatrix.needsUpdate=true;}
+  revealAround(c.x,c.y,c.z);
 }
-function detachChunk(cells,impact){
-  if(!cells.length) return;
+/* один и тот же пересчёт клетки → локальная точка и для меша, и для коллайдера */
+function cellLocal(c,origin,out){
+  out.x=(c.x+.5)*S-origin.x; out.y=(c.y+.5)*S-origin.y; out.z=(c.z+.5)*S-origin.z;
+  return out;
+}
+function addMergedBoxes(body,cells,origin,inset){
+  const rows=new Map();
+  for(const c of cells){
+    const k=c.y+'|'+c.z;
+    let xs=rows.get(k); if(!xs){xs=[];rows.set(k,xs);} xs.push(c.x);
+  }
+  const pad=inset?0.012:0;
+  let n=0;
+  const flush=(x0,x1,y,z)=>{
+    const cx=((x0+x1)*.5+.5)*S-origin.x;
+    const cy=(y+.5)*S-origin.y;
+    const cz=(z+.5)*S-origin.z;
+    body.addShape(new CANNON.Box(new CANNON.Vec3(
+      Math.max(.05,(x1-x0+1)*S*.5-pad), Math.max(.05,S*.5-pad), Math.max(.05,S*.5-pad)
+    )), new CANNON.Vec3(cx,cy,cz));
+    n++;
+  };
+  for(const [k,xs] of rows){
+    xs.sort((a,b)=>a-b);
+    const bar=k.indexOf('|');
+    const y=+k.slice(0,bar), z=+k.slice(bar+1);
+    let run=xs[0], prev=xs[0];
+    for(let i=1;i<=xs.length;i++){
+      if(i===xs.length||xs[i]!==prev+1){ flush(run,prev,y,z); run=xs[i]; }
+      prev=xs[i];
+    }
+  }
+  /* shortcut: больше 180 коробок — один ящик по твёрдым клеткам, иначе солвер захлёбывается */
+  if(n>180){
+    body.shapes.length=0; body.shapeOffsets.length=0; body.shapeOrientations.length=0;
+    let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity,z0=Infinity,z1=-Infinity;
+    for(const c of cells){
+      if(c.x<x0)x0=c.x; if(c.x>x1)x1=c.x;
+      if(c.y<y0)y0=c.y; if(c.y>y1)y1=c.y;
+      if(c.z<z0)z0=c.z; if(c.z>z1)z1=c.z;
+    }
+    body.addShape(new CANNON.Box(new CANNON.Vec3(
+      Math.max(.05,(x1-x0+1)*S*.5-pad), Math.max(.05,(y1-y0+1)*S*.5-pad), Math.max(.05,(z1-z0+1)*S*.5-pad)
+    )), new CANNON.Vec3(((x0+x1)*.5+.5)*S-origin.x,((y0+y1)*.5+.5)*S-origin.y,((z0+z1)*.5+.5)*S-origin.z));
+    n=1;
+  }
+  return n;
+}
+function dropFallChunk(c){
+  if(c.mesh&&c.mesh.parent) c.mesh.parent.remove(c.mesh);
+  if(c.body) physRemove(c.body);
+  if(c.shell) physRemove(c.shell);
+}
+/* статическая оболочка пня в пятне куска, чтобы ствол лёг на ствол, а не провалился в поле высот */
+function makeStumpShell(hard){
+  let x0=Infinity,x1=-Infinity,z0=Infinity,z1=-Infinity,y1=-Infinity;
+  for(const c of hard){
+    if(c.x<x0)x0=c.x; if(c.x>x1)x1=c.x;
+    if(c.z<z0)z0=c.z; if(c.z>z1)z1=c.z;
+    if(c.y>y1)y1=c.y;
+  }
+  x0--; x1++; z0--; z1++;
+  if((x1-x0+1)*(z1-z0+1)>400) return null; /* shortcut: огромный кусок садится только на поле высот */
+  const cells=[];
+  for(let x=x0;x<=x1;x++)for(let z=z0;z<=z1;z++){
+    const yLo=Math.round(terrainH((x+.5)*S,(z+.5)*S)/S);
+    for(let y=yLo;y<=y1;y++){
+      const c=cellAt(x,y,z);
+      if(isStruct(c)) cells.push(c);
+    }
+  }
+  if(!cells.length) return null;
+  const origin=new V3();
+  for(const c of cells){ cellLocal(c,{x:0,y:0,z:0},tmpV); origin.add(tmpV); }
+  origin.divideScalar(cells.length);
+  const body=new CANNON.Body({mass:0,material:physMatGround,collisionFilterGroup:PH_GRP.STATIC,collisionFilterMask:-1});
+  if(!addMergedBoxes(body,cells,origin,false)) return null;
+  body.position.set(origin.x,origin.y,origin.z);
+  physWorld.addBody(body);
+  return body;
+}
+function detachChunk(hard,soft,impact){
+  const draw=hard.length?hard.concat(soft):soft.slice();
+  if(!draw.length) return;
+  const basis=hard.length?hard:soft;
   const centroid=new V3();
-  for(const c of cells) centroid.add(new V3((c.x+.5)*S,(c.y+.5)*S,(c.z+.5)*S));
-  centroid.divideScalar(cells.length);
-  const mesh=new THREE.InstancedMesh(cubeGeo,worldMaterial,cells.length);
-  mesh.castShadow=true;mesh.receiveShadow=true;mesh.frustumCulled=false;
-  let radius=.3,minY=Infinity,maxY=-Infinity;
-  for(let i=0;i<cells.length;i++){
-    const c=cells[i];
-    const p=new V3((c.x+.5)*S-centroid.x,(c.y+.5)*S-centroid.y,(c.z+.5)*S-centroid.z);
-    tmpMat4.makeTranslation(p.x,p.y,p.z);mesh.setMatrixAt(i,tmpMat4);
+  for(const c of basis){ cellLocal(c,{x:0,y:0,z:0},tmpV); centroid.add(tmpV); }
+  centroid.divideScalar(basis.length);
+  const mesh=new THREE.InstancedMesh(cubeGeo,worldMaterial,draw.length);
+  mesh.castShadow=true; mesh.receiveShadow=true; mesh.frustumCulled=false;
+  for(let i=0;i<draw.length;i++){
+    const c=draw[i];
+    cellLocal(c,centroid,tmpV);
+    tmpMat4.makeTranslation(tmpV.x,tmpV.y,tmpV.z); mesh.setMatrixAt(i,tmpMat4);
     tmpColor.setHex(c.mat.color).offsetHSL(srange(-.01,.01),srange(-.03,.03),srange(-.06,.06));
     mesh.setColorAt(i,tmpColor);
-    radius=Math.max(radius,p.length()+S*.55);
-    minY=Math.min(minY,p.y);maxY=Math.max(maxY,p.y);
     hideCellRecord(c);
   }
-  mesh.instanceMatrix.needsUpdate=true;if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
+  mesh.instanceMatrix.needsUpdate=true; if(mesh.instanceColor) mesh.instanceColor.needsUpdate=true;
   mesh.position.copy(centroid);
-  mesh.rotation.set(rnd(-.08,.08),rnd(0,TAU),rnd(-.08,.08));
   scene.add(mesh);
-  const away=new V3(centroid.x-impact.x,0,centroid.z-impact.z);
-  if(away.lengthSq()<.01)away.set(rnd(-1,1),0,rnd(-1,1));
-  away.normalize().multiplyScalar(rnd(.2,1.2));
-  fallChunks.push({
-    mesh,vel:new V3(away.x,rnd(.2,1.4),away.z),spin:new V3(rnd(-1.2,1.2),rnd(-.7,.7),rnd(-1.2,1.2)),
-    life:rnd(90,125),max:0,radius,restY:Math.max(.25,(maxY-minY)*.5+S*.55),rest:false,body:null
+  const leafOnly=!hard.length;
+  const body=new CANNON.Body({
+    mass:leafOnly?Math.max(1,soft.length*.15):hard.length*6,
+    material:physMatDebris,
+    collisionFilterGroup:PH_GRP.CHUNK,
+    /* листва садится на землю, но не держит ствол и не служит ему опорой */
+    collisionFilterMask:leafOnly?PH_GRP.STATIC:(PH_GRP.STATIC|PH_GRP.CORPSE|PH_GRP.DEBRIS|PH_GRP.CHUNK)
   });
-  const fc=fallChunks[fallChunks.length-1];
-  fc.max=fc.life;
-  fc.body=new CANNON.Body({mass:30,material:physMatDebris,
-    collisionFilterGroup:PH_GRP.CHUNK,collisionFilterMask:PH_GRP.STATIC|PH_GRP.CORPSE|PH_GRP.DEBRIS|PH_GRP.CHUNK});
-  fc.body.addShape(new CANNON.Box(new CANNON.Vec3(radius*.7,fc.restY,radius*.7)));
-  fc.body.position.set(centroid.x,centroid.y,centroid.z);
-  tmpQ.setFromEuler(mesh.rotation);
-  fc.body.quaternion.set(tmpQ.x,tmpQ.y,tmpQ.z,tmpQ.w);
-  fc.body.velocity.set(fc.vel.x,fc.vel.y,fc.vel.z);
-  fc.body.angularVelocity.set(fc.spin.x,fc.spin.y,fc.spin.z);
-  fc.body.allowSleep=true; fc.body.sleepSpeedLimit=.2; fc.body.sleepTimeLimit=.6;
-  physAdd(fc.body);
-  while(fallChunks.length>22){const old=fallChunks.shift();if(old.mesh.parent)old.mesh.parent.remove(old.mesh);if(old.body)physRemove(old.body);}
+  body.linearDamping=.15; body.angularDamping=.4;
+  body.allowSleep=true; body.sleepSpeedLimit=.25; body.sleepTimeLimit=.5;
+  const shapeCells=leafOnly?soft:hard;
+  if(!addMergedBoxes(body,shapeCells,centroid,true)){ scene.remove(mesh); return; }
+  body.position.set(centroid.x,centroid.y,centroid.z);
+  const away=new V3(centroid.x-(impact?impact.x:centroid.x),0,centroid.z-(impact?impact.z:centroid.z));
+  if(away.lengthSq()<.04) away.set(1,0,0);
+  away.normalize();
+  body.velocity.set(away.x*.9,.1,away.z*.9);
+  body.angularVelocity.set(away.z*1.5,0,-away.x*1.5);
+  physAdd(body);
+  const shell=leafOnly?null:makeStumpShell(hard);
+  fallChunks.push({mesh,body,shell});
+  /* shortcut: дольше матча куски живут, но больше 36 — старые снимаем, чтобы солвер не копился */
+  while(fallChunks.length>36) dropFallChunk(fallChunks.shift());
   markPhysDirty(centroid.x,centroid.z,4);
   spawnDustPuffs(centroid,UP,5,0xb4a689,1.1);
   queueNavRefresh(centroid,3.5);
 }
-function detachUnsupported(center,radius=3.1){
-  const r=Math.ceil(radius/S);
-  const cx=Math.floor(center.x/S),cy=Math.floor(center.y/S),cz=Math.floor(center.z/S);
-  const x0=cx-r,x1=cx+r,z0=cz-r,z1=cz+r,y0=Math.max(0,cy-r),y1=cy+r;
-  const local=new Map(),keys=new Set();
-  for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)for(let z=z0;z<=z1;z++){
-    const c=cellMap.get(keyOf(x,y,z));
-    if(c&&c.alive&&!c.sub){local.set(keyOf(x,y,z),c);keys.add(keyOf(x,y,z));}
+function takeStructComponent(seed,mark,seen){
+  const id0=keyOf(seed.x,seed.y,seed.z);
+  if(seen.has(id0)||!isStruct(seed)) return null;
+  const comp=[], stack=[seed];
+  seen.add(id0);
+  let anchored=false;
+  while(stack.length){
+    const c=stack.pop();
+    comp.push(c);
+    if(c.y<=-1||c.sg===mark){ anchored=true; break; }
+    for(let i=NB6.length-1;i>=0;i--){
+      const n=cellAt(c.x+NB6[i][0],c.y+NB6[i][1],c.z+NB6[i][2]);
+      if(!isStruct(n)) continue;
+      if(c.tree&&n.tree&&c.tree!==n.tree) continue; /* чужое дерево не проводит опору */
+      const id=keyOf(n.x,n.y,n.z);
+      if(seen.has(id)){ if(n.sg===mark) anchored=true; continue; }
+      seen.add(id); stack.push(n);
+    }
+    if(anchored) break;
   }
-  if(!local.size) return;
+  if(anchored){
+    for(const c of comp) c.sg=mark;
+    for(const c of stack) c.sg=mark;
+    return null;
+  }
+  return comp;
+}
+/* древесина этого дерева, которая всё ещё стоит на земле или на пне, а не на соседе */
+function anchoredWood(id,blockKey){
+  const anchored=new Set();
+  const set=treeCells.get(id);
+  if(!set) return anchored;
   const seen=new Set();
-  for(const id of keys){
-    if(seen.has(id)) continue;
-    const comp=[],queue=[id];seen.add(id);let boundary=false,ground=false;
-    while(queue.length){
-      const cid=queue.pop(),c=local.get(cid);if(!c)continue;
-      comp.push(c);
-      if(c.x===x0||c.x===x1||c.y===y0||c.y===y1||c.z===z0||c.z===z1)boundary=true;
-      if(c.y<=0)ground=true;
-      if(comp.length>28)boundary=true;
-      const nb=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
-      for(const [dx,dy,dz] of nb){
-        const nid=keyOf(c.x+dx,c.y+dy,c.z+dz);
-        if(local.has(nid)&&!seen.has(nid)){seen.add(nid);queue.push(nid);}
+  for(const seed of set){
+    if(!seed.alive||!isStruct(seed)) continue;
+    const k0=keyOf(seed.x,seed.y,seed.z);
+    if(blockKey.has(k0)||seen.has(k0)) continue;
+    const stack=[seed], visited=[];
+    seen.add(k0);
+    let grounded=false;
+    while(stack.length){
+      const c=stack.pop();
+      visited.push(c);
+      for(let i=0;i<NB6.length;i++){
+        const n=cellAt(c.x+NB6[i][0],c.y+NB6[i][1],c.z+NB6[i][2]);
+        if(!isStruct(n)) continue;
+        if(!n.tree||n.y<=-1){ grounded=true; continue; }
+        if(n.tree!==id) continue;
+        const k=keyOf(n.x,n.y,n.z);
+        if(blockKey.has(k)||seen.has(k)) continue;
+        seen.add(k); stack.push(n);
       }
     }
-    if(!boundary&&!ground&&comp.length<=28) detachChunk(comp,center);
+    if(grounded) for(const c of visited) anchored.add(keyOf(c.x,c.y,c.z));
+  }
+  return anchored;
+}
+function sitsOnSupport(c,anchored,blockKey){
+  for(let i=0;i<NB6.length;i++){
+    const n=cellAt(c.x+NB6[i][0],c.y+NB6[i][1],c.z+NB6[i][2]);
+    if(!isStruct(n)) continue;
+    const k=keyOf(n.x,n.y,n.z);
+    if(blockKey.has(k)) continue;
+    if(n.tree&&n.tree!==c.tree) continue;
+    if(!n.tree||n.y<=-1||anchored.has(k)) return true;
+  }
+  return false;
+}
+/* крона падает вместе со своим стволом, даже если она упирается в соседнее дерево */
+function bakeWithTree(hard){
+  const blockKey=new Set(), trees=new Set();
+  for(const c of hard){
+    blockKey.add(keyOf(c.x,c.y,c.z));
+    if(c.tree) trees.add(c.tree);
+  }
+  const wood=[], soft=[], taken=new Set();
+  for(const id of trees){
+    const anchored=anchoredWood(id,blockKey);
+    const set=treeCells.get(id);
+    if(!set) continue;
+    for(const c of set){
+      if(!c.alive) continue;
+      const k=keyOf(c.x,c.y,c.z);
+      if(blockKey.has(k)||taken.has(k)) continue;
+      if(c.mat.soft){
+        if(sitsOnSupport(c,anchored,blockKey)) continue;
+        soft.push(c); taken.add(k);
+      }else if(!anchored.has(k)){
+        wood.push(c); taken.add(k); blockKey.add(k);
+      }
+    }
+  }
+  return {wood,soft};
+}
+function releaseLooseSoft(seeds,impact){
+  const seen=new Set();
+  for(const seed of seeds){
+    if(!seed||!seed.alive||!seed.mat.soft) continue;
+    const id0=keyOf(seed.x,seed.y,seed.z);
+    if(seen.has(id0)) continue;
+    const group=seed.tree||0;
+    const comp=[], stack=[seed];
+    seen.add(id0);
+    let held=false;
+    while(stack.length){
+      const c=stack.pop();
+      if(!c.alive) continue;
+      comp.push(c);
+      for(let i=0;i<NB6.length;i++){
+        const n=cellAt(c.x+NB6[i][0],c.y+NB6[i][1],c.z+NB6[i][2]);
+        if(!n||!n.alive) continue;
+        if(isStruct(n)){
+          if(!n.tree||n.tree===c.tree) held=true;
+        }else if(n.mat.soft&&(n.tree||0)===group){
+          const id=keyOf(n.x,n.y,n.z);
+          if(!seen.has(id)){ seen.add(id); stack.push(n); }
+        }
+      }
+    }
+    if(!held&&comp.length) detachChunk([],comp,impact);
   }
 }
-function updateFallChunks(dt){
-  for(let i=fallChunks.length-1;i>=0;i--){
-    const c=fallChunks[i];c.life-=dt;
-    if(c.life<=0){if(c.mesh.parent)c.mesh.parent.remove(c.mesh);if(c.body)physRemove(c.body);fallChunks.splice(i,1);continue;}
-    if(c.body){
-      c.mesh.position.set(c.body.position.x,c.body.position.y,c.body.position.z);
-      c.mesh.quaternion.set(c.body.quaternion.x,c.body.quaternion.y,c.body.quaternion.z,c.body.quaternion.w);
-      if(c.mesh.position.y<-5){c.life=0;continue;}
-    } else if(!c.rest){
-      c.vel.y-=11*dt;
-      c.mesh.position.addScaledVector(c.vel,dt);
-      c.mesh.rotation.x+=c.spin.x*dt;c.mesh.rotation.y+=c.spin.y*dt;c.mesh.rotation.z+=c.spin.z*dt;
-      if(c.mesh.position.y< c.restY){
-        c.mesh.position.y=c.restY;
-        c.vel.y*=-.22;c.vel.x*=.52;c.vel.z*=.52;c.spin.multiplyScalar(.45);
-        if(Math.abs(c.vel.y)<.25&&Math.hypot(c.vel.x,c.vel.z)<.2)c.rest=true;
-      }
+function releaseFloating(holes,impact){
+  const mark=++supGen;
+  const seen=new Set();
+  const structSeeds=[], softSeeds=[];
+  for(const h of holes){
+    for(const [dx,dy,dz] of NB6){
+      const n=cellAt(h.x+dx,h.y+dy,h.z+dz);
+      if(!n||!n.alive) continue;
+      if(n.mat.soft) softSeeds.push(n);
+      else structSeeds.push(n);
     }
-    if(c.life<8)c.mesh.scale.setScalar(Math.max(.01,c.life/8));
+  }
+  for(const seed of structSeeds){
+    if(!seed.alive) continue;
+    const comp=takeStructComponent(seed,mark,seen);
+    if(!comp||!comp.length) continue;
+    const baked=bakeWithTree(comp);
+    for(const c of baked.wood) seen.add(keyOf(c.x,c.y,c.z));
+    detachChunk(comp.concat(baked.wood),baked.soft,impact);
+  }
+  releaseLooseSoft(softSeeds,impact);
+}
+function detachUnsupported(center,radius=3.1,holes=null){
+  /* radius оставлен для старого вызова: кусок больше не режется коробкой в 3 м */
+  void radius;
+  const list=(holes&&holes.length)?holes:[{x:Math.floor(center.x/S),y:Math.floor(center.y/S),z:Math.floor(center.z/S)}];
+  releaseFloating(list,center);
+}
+function updateFallChunks(dt){
+  void dt;
+  for(let i=fallChunks.length-1;i>=0;i--){
+    const c=fallChunks[i];
+    if(!c.body){ dropFallChunk(c); fallChunks.splice(i,1); continue; }
+    c.mesh.position.set(c.body.position.x,c.body.position.y,c.body.position.z);
+    c.mesh.quaternion.set(c.body.quaternion.x,c.body.quaternion.y,c.body.quaternion.z,c.body.quaternion.w);
+    if(c.mesh.position.y<-5){ dropFallChunk(c); fallChunks.splice(i,1); }
   }
 }
 function clearFallChunks(){
-  for(const c of fallChunks){if(c.mesh.parent)c.mesh.parent.remove(c.mesh);if(c.body)physRemove(c.body);}
+  for(const c of fallChunks) dropFallChunk(c);
   fallChunks.length=0;
 }
 
@@ -4700,7 +4923,9 @@ function carveWorldRay(origin,dir,maxDist,weapon,shooter){
   let energy=(weapon.energy||8)*botFactor;
   const power=clamp((weapon.energy||8)/26,.55,2.1);
   let stopped=false,last=null,hits=0,firstWallT=Infinity,stopT=0;
+  const holes=[];
   ddaFine(origin,dir,maxDist,(cell,si,t,point)=>{
+    if(cell.mat.soft) return true; /* листва и кусты не тратят энергию и не останавливают пулю */
     if(energy<=1e-4){ stopped=true; stopT=t; last=point; return false; }
     const sub=subdivideCell(cell);
     if(!sub){ stopped=true; last=point; stopT=t; return false; } /* пул вокселей кончился */
@@ -4730,12 +4955,16 @@ function carveWorldRay(origin,dir,maxDist,weapon,shooter){
     spawnVoxelBit(sv.pos,cell.mat,weapon.bodyRadius||.2);
     if(cell.sub.every(s=>!s.alive)){
       destroyCell(cell);
-      detachUnsupported(point,3.1);
-      queueNavRefresh(point,3.2);
+      holes.push(cell);
     } else markHitCell(cell,weapon);
     if(energy<=1e-4){ stopped=true; return false; }
     return true;
   });
+  if(holes.length){
+    const at=last||origin;
+    detachUnsupported(at,3.1,holes);
+    queueNavRefresh(at,3.2);
+  }
   return {stopped,point:last,hits,firstWallT,stopT};
 }
 
@@ -6523,6 +6752,19 @@ function initWorld(){
   console.assert(bots.length===game.botCount,'[voxel-manor] fighter self-check: bot count mismatch');
   console.assert(lastHeroOutcome(false,3)==='loss'&&lastHeroOutcome(false,0)==='loss','[voxel-manor] last hero: player death is a loss');
   console.assert(lastHeroOutcome(true,0)==='win'&&lastHeroOutcome(true,2)===null,'[voxel-manor] last hero: win only as the last one alive');
+  {
+    let leaf=null, bed=null;
+    for(const c of cellMap.values()){
+      if(!leaf&&c.alive&&c.mat.soft) leaf=c;
+      if(!bed&&c.alive&&c.y<=-1&&!c.mat.soft) bed=c;
+      if(leaf&&bed) break;
+    }
+    console.assert(!!leaf&&!solidAtWorld((leaf.x+.5)*S,(leaf.y+.5)*S,(leaf.z+.5)*S),'[voxel-manor] foliage is not solid');
+    const n=fallChunks.length;
+    detachUnsupported(new V3((bed.x+.5)*S,(bed.y+.5)*S,(bed.z+.5)*S));
+    console.assert(fallChunks.length===n&&cellMap.has(keyOf(bed.x,bed.y,bed.z)),'[voxel-manor] ground contact does not shed the world');
+    console.assert(treeCells.size>20,'[voxel-manor] trees are baked with their voxels');
+  }
 }
 initWorld();
 
