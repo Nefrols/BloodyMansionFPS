@@ -185,7 +185,7 @@
   h1.title em{font-style:normal;color:var(--blood-bright);display:block}
   .subtitle{font:10px/1.6 var(--mono);letter-spacing:.25em;color:#a89f90;text-transform:uppercase;margin:0 0 22px}
   .setup{display:flex;flex-wrap:wrap;gap:14px 22px;padding:15px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:22px}
-  .seg{display:flex;align-items:center;gap:4px}
+  .seg{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
   .seg-label{font:9px/1 var(--mono);letter-spacing:.18em;color:#8e8679;margin-right:5px}
   .seg button{appearance:none;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.03);color:#bdb4a7;
     font:600 11px/1 var(--mono);min-width:36px;padding:8px 9px;cursor:pointer;
@@ -3350,7 +3350,7 @@ const BOT_DEFS=[
 ];
 const bots=[];
 const corpses=[];
-const game={started:false,paused:true,over:false,scoreLimit:50000,botCount:10,difficulty:'hard',kills:0,deaths:0,playerScore:0,botKills:0,buildTime:0,mode:'ffa',soloMode:'assault',soloResult:null,soloTime:0,matchId:0};
+const game={started:false,paused:true,over:false,scoreLimit:50000,botCount:10,difficulty:'hard',kills:0,deaths:0,playerScore:0,botKills:0,buildTime:0,mode:'ffa',soloMode:'assault',soloResult:null,soloTime:0,lastResult:null,matchId:0};
 /* Легкий: плавное наведение с отставанием, стоят на месте при стрельбе.
    Сложный: быстрый поворот, упреждение, постоянное движение/уклонение и 3-5 с огня по последней точке. */
 const DIFF={
@@ -4011,6 +4011,10 @@ function killBot(bot,killer,headshot,torsoGone,shot=null){
     bot.respawnAt=Infinity;
     checkSoloEnd();
     updateSoloTopbar();
+  }else if(game.mode==='last'){
+    bot.respawnAt=Infinity;
+    checkLastHero();
+    updateLastTopbar();
   }else{
     bot.respawnAt=nowT+5.2;
     checkMatchEnd();
@@ -4415,7 +4419,7 @@ function updateBots(dt){
         bot.bleedT=0;
         floorSplat(bot.pos.x+rnd(-.5,.5),bot.pos.z+rnd(-.5,.5),rnd(.18,.55));
       }
-      if(game.mode!=='solo'&&!game.over&&nowT>=bot.respawnAt) resetBotBody(bot);
+      if(game.mode==='ffa'&&!game.over&&nowT>=bot.respawnAt) resetBotBody(bot);
       continue;
     }
     bot.invuln=Math.max(0,bot.invuln-dt);
@@ -4757,7 +4761,7 @@ function killPlayer(killer,headshot){
     addFeed(killer,player,headshot);
   } else addFeed(null,player,headshot);
   player.deathAt=nowT;
-  if(game.mode==='solo'){
+  if(game.mode==='solo'||game.mode==='last'){
     player.respawnAt=Infinity;
     $('#respawn').classList.remove('on');
   }else{
@@ -4774,9 +4778,10 @@ function killPlayer(killer,headshot){
   showCenter('ВЫ УБИТЫ',killer?`${killer.name}${headshot?' // ГОЛОВА':''}`:'СРЕДА // РАЗОРВАЛО НА ЧАСТИ','death');
   refreshDeathClasses();
   updateDeathUi();
-  if(game.mode==='solo'){
+  if(game.mode==='solo'||game.mode==='last'){
     const match=game.matchId;
-    setTimeout(()=>{if(game.mode==='solo'&&!game.over&&game.matchId===match) endSolo(false);},1100);
+    const mode=game.mode;
+    setTimeout(()=>{if(game.mode===mode&&!game.over&&game.matchId===match) (mode==='last'?endLast(false):endSolo(false));},1100);
   }else checkMatchEnd();
 }
 
@@ -5559,7 +5564,7 @@ function updatePlayer(dt){
     player.damageFlash=damp(player.damageFlash,0,2.5,dt);
     updateDeathUi();
     updatePlayerUi(dt);
-    if(game.mode!=='solo'&&!game.over&&nowT>=player.respawnAt) respawnPlayer();
+    if(game.mode==='ffa'&&!game.over&&nowT>=player.respawnAt) respawnPlayer();
     return;
   }
   player.invuln=Math.max(0,player.invuln-dt);
@@ -5848,6 +5853,12 @@ function updateSoloTopbar(){
   const lim=$('#topbar .limit');
   if(lim) lim.innerHTML=`ОСТАЛОСЬ БОТОВ: <b id="limitTxt">${left}</b>`;
 }
+function updateLastTopbar(){
+  const left=(player.alive?1:0)+bots.filter(b=>b.alive).length;
+  hudSoloLeft=left;
+  const lim=$('#topbar .limit');
+  if(lim) lim.innerHTML=`ЖИВЫХ: <b id="limitTxt">${left}</b>`;
+}
 function updateLeaders(){
   if(game.mode==='solo'){
     const alive=bots.filter(b=>b.alive);
@@ -5867,11 +5878,14 @@ function updateHudFrame(dt){
   if(hudTimer<=0){
     hudTimer=.16;
     const list=rankedPlayers();
-    $('#selfScore').textContent=game.mode==='solo'?player.kills:Math.round(player.score);
+    $('#selfScore').textContent=(game.mode==='solo'||game.mode==='last')?player.kills:Math.round(player.score);
     updateLeaders();
     if(game.mode==='solo'){
       const left=bots.filter(b=>b.alive).length;
       if(left!==hudSoloLeft) updateSoloTopbar();
+    }else if(game.mode==='last'){
+      const left=(player.alive?1:0)+bots.filter(b=>b.alive).length;
+      if(left!==hudSoloLeft) updateLastTopbar();
     }
     const top=list[0];
     $('#topbar').style.borderTopColor=top&&top.isPlayer?'var(--acid)':'rgba(255,255,255,.2)';
@@ -5904,7 +5918,7 @@ function showMenu(mode,winner){
   const aimRow=touchMode?`<label class="check"><input type="checkbox" id="aimAssistPick" ${aimAssistOn?'checked':''}><span>АВТОПРИЦЕЛ</span><em>ПОДТЯГИВАЕТ К ЦЕЛИ ПРИ ОГНЕ И ПРИЦЕЛЕ</em></label>`:'';
   const seg=(set,label,items,cur)=>`<div class="seg" data-set="${set}"><span class="seg-label">${label}</span>${items.map(([v,t])=>`<button data-v="${v}" class="${v===cur?'on':''}" aria-pressed="${v===cur}">${t}</button>`).join('')}</div>`;
   const classes=seg('class','КЛАСС',[[1,'ДРОБОВИК'],[2,'АВТОМАТ'],[3,'ПУЛЕМЁТ'],[4,'ВИНТОВКА']],player.nextPrimary);
-  const modeSel=seg('mode','РЕЖИМ',[['ffa','ВСЕ ПРОТИВ ВСЕХ'],['solo','ОДИН ПРОТИВ ВСЕХ']],game.mode);
+  const modeSel=seg('mode','РЕЖИМ',[['ffa','ВСЕ ПРОТИВ ВСЕХ'],['last','ПОСЛЕДНИЙ ГЕРОЙ'],['solo','ОДИН ПРОТИВ ВСЕХ']],game.mode);
   const soloSel=game.mode==='solo'?seg('soloMode','ВАРИАНТ',[['assault','ШТУРМ'],['defense','ЗАЩИТА']],game.soloMode):'';
   if(mode==='end'){
     if(game.mode==='solo'){
@@ -5923,6 +5937,27 @@ function showMenu(mode,winner){
           <div><span>ВАШИ ФРАГИ</span><b>${player.kills}</b></div>
           <div><span>ВАШИ СМЕРТИ</span><b>${player.deaths}</b></div>
         </div>
+        <div class="btnrow" style="margin-top:24px">
+          <button class="btn" data-action="new">НОВЫЙ МАТЧ</button>
+          <button class="btn ghost" data-action="menu">ГЛАВНОЕ МЕНЮ</button>
+        </div>
+      </div>`;
+      return;
+    }
+    if(game.mode==='last'){
+      const win=game.lastResult==='win';
+      const left=bots.filter(b=>b.alive).length;
+      overlay.innerHTML=`<div class="card">
+        <div class="kicker">ПОСЛЕДНИЙ ГЕРОЙ // БЕЗ ВОЗРОЖДЕНИЙ</div>
+        <h1 class="title">${win?'ВЫ<br><em>ПОБЕДИЛИ</em>':'ВЫ<br><em>УБИТЫ</em>'}</h1>
+        <p class="subtitle">${win?'ВЫ ПОСЛЕДНИЙ':'ЭТО ПОРАЖЕНИЕ'}</p>
+        <div class="endgrid">
+          <div><span>ЖИВЫХ БОТОВ</span><b>${left}</b></div>
+          <div><span>ВАШИ ФРАГИ</span><b>${player.kills}</b></div>
+          <div><span>ВАШИ СМЕРТИ</span><b>${player.deaths}</b></div>
+          <div><span>ВАШИ ОЧКИ</span><b>${Math.round(player.score)}</b></div>
+        </div>
+        ${scoreTableHTML()}
         <div class="btnrow" style="margin-top:24px">
           <button class="btn" data-action="new">НОВЫЙ МАТЧ</button>
           <button class="btn ghost" data-action="menu">ГЛАВНОЕ МЕНЮ</button>
@@ -5954,12 +5989,16 @@ function showMenu(mode,winner){
   }
   if(mode==='pause'){
     const left=bots.filter(b=>b.alive).length;
-    const pauseKick=game.mode==='solo'?`ОДИН ПРОТИВ ВСЕХ // ${game.soloMode==='assault'?'ШТУРМ':'ЗАЩИТА'} // ОСТАЛОСЬ ${left}`:`СИМУЛЯЦИЯ ПРИОСТАНОВЛЕНА // ДО ${fmtLimit()} ОЧКОВ`;
+    const pauseKick=game.mode==='solo'?`ОДИН ПРОТИВ ВСЕХ // ${game.soloMode==='assault'?'ШТУРМ':'ЗАЩИТА'} // ОСТАЛОСЬ ${left}`
+      :game.mode==='last'?`ПОСЛЕДНИЙ ГЕРОЙ // ЖИВЫХ ${(player.alive?1:0)+left}`
+      :`СИМУЛЯЦИЯ ПРИОСТАНОВЛЕНА // ДО ${fmtLimit()} ОЧКОВ`;
+    const pauseHint=game.mode==='last'?'Возрождений нет. Ваша смерть — поражение.'
+      :game.mode==='solo'?'Матч продолжится без возрождения.':'Смена класса применится после смерти.';
     overlay.innerHTML=`<div class="card menu">
       <div class="kicker">${pauseKick}</div>
       <h1 class="title">ПАУЗА</h1>
-      ${game.mode==='solo'?'':`<div class="setup">${classes}</div>`}
-      <p class="hint" style="margin:-8px 0 14px">${game.mode==='solo'?'Матч продолжится без возрождения.':'Смена класса применится после смерти.'}</p>
+      ${game.mode==='ffa'?`<div class="setup">${classes}</div>`:''}
+      <p class="hint" style="margin:-8px 0 14px">${pauseHint}</p>
       <div class="btnrow">
         <button class="btn" data-action="resume">ПРОДОЛЖИТЬ</button>
         <button class="btn ghost" data-action="new">НОВЫЙ МАТЧ</button>
@@ -5978,8 +6017,11 @@ function showMenu(mode,winner){
   const limit=game.mode==='ffa'?seg('limit','ЛИМИТ',[[25000,'25 000'],[50000,'50 000'],[100000,'100 000'],[0,'∞']],isFinite(game.scoreLimit)?game.scoreLimit:0):'';
   const diff=seg('diff','СЛОЖНОСТЬ',[['easy','ЛЕГКИЙ'],['hard','СЛОЖНЫЙ']],game.difficulty);
   const solo=game.mode==='solo';
-  const kicker=solo?`ОДИН ПРОТИВ ВСЕХ // ${game.soloMode==='assault'?'ШТУРМ':'ЗАЩИТА'} // БЕЗ ВОЗРОЖДЕНИЙ`:'ВОКСЕЛЬНЫЙ АРЕНА-ШУТЕР // СВОБОДНАЯ ОХОТА';
-  const subtitle=solo?(game.soloMode==='assault'?'ЗАЧИСТИТЬ ОСОБНЯК':'УДЕРЖАТЬ ВТОРОЙ ЭТАЖ'):'TEARDOWN × UNREAL TOURNAMENT';
+  const last=game.mode==='last';
+  const kicker=solo?`ОДИН ПРОТИВ ВСЕХ // ${game.soloMode==='assault'?'ШТУРМ':'ЗАЩИТА'} // БЕЗ ВОЗРОЖДЕНИЙ`
+    :last?'ПОСЛЕДНИЙ ГЕРОЙ // БЕЗ ВОЗРОЖДЕНИЙ':'ВОКСЕЛЬНЫЙ АРЕНА-ШУТЕР // СВОБОДНАЯ ОХОТА';
+  const subtitle=solo?(game.soloMode==='assault'?'ЗАЧИСТИТЬ ОСОБНЯК':'УДЕРЖАТЬ ВТОРОЙ ЭТАЖ')
+    :last?'ПОСЛЕДНИЙ ВЫЖИВШИЙ ПОБЕЖДАЕТ':'TEARDOWN × UNREAL TOURNAMENT';
   overlay.innerHTML=`<div class="card menu">
     <div class="kicker">${kicker}</div>
     <h1 class="title">КРОВАВЫЙ <em>ОСОБНЯК</em></h1>
@@ -5999,7 +6041,7 @@ function refreshDeathClasses(){
   document.querySelectorAll('#deathClasses [data-class]').forEach(b=>b.classList.toggle('on',+b.dataset.class===player.nextPrimary));
 }
 function chooseClass(wi){
-  if(game.mode==='solo'||player.alive||game.over||wi<1||wi>4) return;
+  if(game.mode!=='ffa'||player.alive||game.over||wi<1||wi>4) return;
   player.nextPrimary=wi; player.primary=wi;
   respawnPlayer();
   AudioSys.ui();
@@ -6096,7 +6138,7 @@ function beginMatch(regenMap){
   player.triggerHeld=false;player.triggerQueued=false;mouse.left=false;mouse.right=false;
   for(const b of bots){b.score=0;b.kills=0;b.deaths=0;b.respawnAt=0;}
   game.kills=0;game.deaths=0;game.playerScore=0;game.over=false;game.started=true;game.paused=false;
-  game.soloResult=null; game.soloTime=0; game.matchId=(game.matchId||0)+1;
+  game.soloResult=null; game.soloTime=0; game.lastResult=null; game.matchId=(game.matchId||0)+1;
   hudSoloLeft=-1;
   killCombo=0;killComboAt=-99;
   $('#killPop').classList.remove('on');
@@ -6106,14 +6148,21 @@ function beginMatch(regenMap){
   $('#hud').classList.add('on');
   $('#topbar').style.display='block';
   const solo=game.mode==='solo';
-  $('#topbar .mode').textContent=solo?`ОДИН ПРОТИВ ВСЕХ // ${game.soloMode==='assault'?'ШТУРМ':'ЗАЩИТА'}`:'СВОБОДНАЯ ОХОТА // ВСЕ ПРОТИВ ВСЕХ';
-  const selfLabel=$('#killsSelf span'); if(selfLabel) selfLabel.textContent=solo?'ВАШИ ФРАГИ':'ВАШИ ОЧКИ';
+  const last=game.mode==='last';
+  $('#topbar .mode').textContent=solo?`ОДИН ПРОТИВ ВСЕХ // ${game.soloMode==='assault'?'ШТУРМ':'ЗАЩИТА'}`
+    :last?'ПОСЛЕДНИЙ ГЕРОЙ':'СВОБОДНАЯ ОХОТА // ВСЕ ПРОТИВ ВСЕХ';
+  const selfLabel=$('#killsSelf span'); if(selfLabel) selfLabel.textContent=(solo||last)?'ВАШИ ФРАГИ':'ВАШИ ОЧКИ';
   const lim0=$('#topbar .limit');
-  if(!solo&&lim0) lim0.innerHTML=`ДО <b id="limitTxt">${fmtLimit()}</b> ОЧКОВ`;
+  if(!solo&&!last&&lim0) lim0.innerHTML=`ДО <b id="limitTxt">${fmtLimit()}</b> ОЧКОВ`;
+  const sbSpan=$('#scoreboard h3 span'), sbFoot=$('#scoreboard .foot');
+  if(sbSpan) sbSpan.textContent=solo?'ОДИН ПРОТИВ ВСЕХ':last?'ПОСЛЕДНИЙ ГЕРОЙ':'СВОБОДНАЯ ОХОТА';
+  if(sbFoot) sbFoot.textContent=last?'TAB — ЗАКРЫТЬ // ПОСЛЕДНИЙ ВЫЖИВШИЙ ПОБЕЖДАЕТ'
+    :solo?'TAB — ЗАКРЫТЬ // БЕЗ ВОЗРОЖДЕНИЙ':'TAB — ЗАКРЫТЬ // МАТЧ ИДЁТ ДО ЛИМИТА ОЧКОВ';
   respawnPlayer();
   player.invuln=1.8;
   spawnAllBots(solo?buildSoloPlan():null);
   if(solo) updateSoloTopbar();
+  else if(last) updateLastTopbar();
   const m=weaponModels[player.weapon]; if(m)m.visible=true;
   hideOverlay(); clearCenter(); setScope(false);
   $('#fps').style.display='block';
@@ -6159,6 +6208,22 @@ function checkMatchEnd(){
   const all=[player,...bots];
   const winner=all.find(p=>p.score>=game.scoreLimit);
   if(winner) endMatch(winner);
+}
+/* смерть игрока — сразу поражение, даже если боты ещё живы; победа — только когда игрок один выжил */
+function lastHeroOutcome(playerAlive,botsAlive){
+  if(!playerAlive) return 'loss';
+  if(botsAlive<=0) return 'win';
+  return null;
+}
+function endLast(win){
+  if(game.over) return;
+  game.lastResult=win?'win':'loss';
+  endMatch(win?player:null);
+}
+function checkLastHero(){
+  if(game.mode!=='last'||game.over||!game.started) return;
+  const outcome=lastHeroOutcome(player.alive,bots.reduce((n,b)=>n+(b.alive?1:0),0));
+  if(outcome) endLast(outcome==='win');
 }
 
 /* ---------- input ---------- */
@@ -6381,9 +6446,9 @@ $('#overlay').addEventListener('click',e=>{
       if(wi>=1&&wi<=4) player.nextPrimary=wi;
     }
     else if(set==='mode'){
-      game.mode=raw==='solo'?'solo':'ffa';
+      game.mode=raw==='solo'||raw==='last'?raw:'ffa';
       if(game.mode==='solo'&&![3,5,10].includes(game.botCount)) game.botCount=5;
-      if(game.mode==='ffa'&&![1,5,10,30].includes(game.botCount)) game.botCount=10;
+      if(game.mode!=='solo'&&![1,5,10,30].includes(game.botCount)) game.botCount=10;
       AudioSys.init(); AudioSys.ui(); showMenu('menu'); return;
     }
     else if(set==='soloMode'){
@@ -6456,6 +6521,8 @@ function initWorld(){
   console.assert(cellMap.size>5000,'[voxel-manor] world self-check: too few voxels');
   console.assert(NAV.nodes.length>300,'[voxel-manor] nav self-check: no walkable grid');
   console.assert(bots.length===game.botCount,'[voxel-manor] fighter self-check: bot count mismatch');
+  console.assert(lastHeroOutcome(false,3)==='loss'&&lastHeroOutcome(false,0)==='loss','[voxel-manor] last hero: player death is a loss');
+  console.assert(lastHeroOutcome(true,0)==='win'&&lastHeroOutcome(true,2)===null,'[voxel-manor] last hero: win only as the last one alive');
 }
 initWorld();
 
