@@ -166,7 +166,8 @@
   #scoreboard td.p{color:var(--acid);text-align:right;font-weight:700}
   #scoreboard td.n{text-align:right;opacity:.5}
   #scoreboard .foot{padding:13px 24px 17px;font:9px/1.5 var(--mono);letter-spacing:.12em;opacity:.32}
-  #fps{position:fixed;right:8px;bottom:4px;font:9px var(--mono);color:rgba(255,255,255,.24);z-index:9;pointer-events:none}
+  #fps{position:fixed;right:8px;bottom:4px;z-index:11;pointer-events:none;text-align:right;white-space:nowrap;
+    font:11px/1.35 var(--mono);color:rgba(232,224,208,.78);text-shadow:0 1px 2px #000}
   #overlay{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
     background:radial-gradient(ellipse at 50% 40%,rgba(8,9,12,.28),rgba(4,4,6,.82));backdrop-filter:blur(3px);
     transition:opacity .25s;cursor:default}
@@ -200,6 +201,10 @@
   .check input:checked:after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;
     border:solid #1c0c06;border-width:0 2px 2px 0;transform:rotate(45deg)}
   .check em{font-style:normal;color:#6f695f;letter-spacing:.04em;margin-left:auto;text-transform:none}
+  .sens{display:flex;align-items:center;gap:10px;margin:0 0 16px;font:10px/1.4 var(--mono);letter-spacing:.12em;
+    color:#bdb4a7;text-transform:uppercase}
+  .sens input[type=range]{flex:1;min-width:0;height:18px;accent-color:var(--acid);cursor:pointer}
+  .sens em{font-style:normal;color:#a89f90;min-width:2.4em;text-align:right;letter-spacing:.04em}
   .btn{border:0;padding:14px 28px;background:var(--acid);color:#1c0c06;font:700 12px/1 var(--mono);letter-spacing:.19em;
     text-transform:uppercase;cursor:pointer;clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);
     transition:background .15s,transform .1s;box-shadow:0 0 38px rgba(255,106,42,.13)}
@@ -285,7 +290,9 @@
   html.touch #killfeed{top:calc(82px + env(safe-area-inset-top,0px));right:calc(14px + env(safe-area-inset-right,0px));width:190px}
   html.touch .feed{font-size:10px;padding:3px 7px}
   html.touch #adsBlur{display:none}
-  html.touch #fps{font-size:8px;bottom:2px}
+  html.touch #fps{font-size:10px;top:calc(12px + env(safe-area-inset-top,0px));bottom:auto;left:calc(62px + env(safe-area-inset-left,0px));right:auto;text-align:left}
+  html.touch .sens{padding:7px 0;font-size:11px;margin-bottom:10px}
+  html.touch .sens input[type=range]{height:28px}
   html.touch .card{max-height:calc(100dvh - 16px);padding:22px 18px 18px}
   html.touch .btn{padding:15px 20px}
   html.touch .btnrow .btn{flex:1 1 auto}
@@ -425,6 +432,40 @@ addEventListener('resize',()=>{
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight);
 });
+
+/* GPU time of the render pass. Chrome reports this in nanoseconds via the timer-query extension. */
+const gpuGL=renderer.getContext();
+const gpuExt=gpuGL.getExtension('EXT_disjoint_timer_query_webgl2');
+const gpuQ=[];
+let gpuCur=null, gpuLive=!!gpuExt, gpuSum=0, gpuN=0, gpuLabel='—';
+function pollGpu(){
+  if(!gpuLive) return;
+  if(gpuGL.getParameter(gpuExt.GPU_DISJOINT_EXT)){
+    while(gpuQ.length) gpuGL.deleteQuery(gpuQ.pop());
+    if(gpuCur){gpuGL.deleteQuery(gpuCur);gpuCur=null;}
+    return;
+  }
+  while(gpuQ.length&&gpuGL.getQueryParameter(gpuQ[0],gpuGL.QUERY_RESULT_AVAILABLE)){
+    const q=gpuQ.shift();
+    const ns=gpuGL.getQueryParameter(q,gpuGL.QUERY_RESULT);
+    gpuGL.deleteQuery(q);
+    if(ns>0){gpuSum+=ns/1e6;gpuN++;}
+  }
+}
+function beginGpu(){
+  if(!gpuLive||gpuCur) return;
+  const q=gpuGL.createQuery();
+  if(!q){gpuLive=false;return;}
+  gpuGL.beginQuery(gpuExt.TIME_ELAPSED_EXT,q);
+  gpuCur=q;
+}
+function endGpu(){
+  if(!gpuCur) return;
+  gpuGL.endQuery(gpuExt.TIME_ELAPSED_EXT);
+  gpuQ.push(gpuCur);
+  gpuCur=null;
+  while(gpuQ.length>4) gpuGL.deleteQuery(gpuQ.shift());
+}
 
 /* ---------- textures ---------- */
 function makeTexture(size, paint, rx=1, ry=1, color=true){
@@ -5997,9 +6038,14 @@ let fullscreenPref=true;
 let crosshairOn=true;
 let tracersOn=true;
 let aimAssistOn=true;
+/* 1 = прежняя скорость обзора. Ползунок в меню и в паузе. */
+let mouseSens=1;
+function lookScale(base){
+  return base*mouseSens*(player.ads>.6&&currentWeapon().scope?.4:1);
+}
 let centerTimer=0;
 let wallT=0;
-let hudTimer=0,fpsTimer=0,fpsFrames=0;
+let hudTimer=0,fpsTimer=0,fpsFrames=0,cpuSum=0,cpuN=0;
 let lastDeathMsg=false;
 let hudSoloLeft=-1;
 
@@ -6120,11 +6166,15 @@ function updateHudFrame(dt){
     $('#topbar').style.borderTopColor=top&&top.isPlayer?'var(--acid)':'rgba(255,255,255,.2)';
     if(scoreboardOpen) updateScoreboard();
   }
+}
+function notePerf(dt,cpuMs){
   if(dt>0){fpsTimer+=dt;fpsFrames++;}
-  if(fpsTimer>=.5){
-    $('#fps').textContent=Math.round(fpsFrames/fpsTimer)+' FPS';
-    fpsTimer=0;fpsFrames=0;
-  }
+  cpuSum+=cpuMs;cpuN++;
+  if(fpsTimer<.5||!fpsFrames) return;
+  if(gpuN) gpuLabel=(gpuSum/gpuN).toFixed(1)+' ms';
+  const cpu=(cpuSum/cpuN).toFixed(1);
+  $('#fps').textContent=`${Math.round(fpsFrames/fpsTimer)} FPS   CPU ${cpu} ms   GPU ${gpuLabel}`;
+  fpsTimer=0;fpsFrames=0;cpuSum=0;cpuN=0;gpuSum=0;gpuN=0;
 }
 
 function updateMenuCamera(dt){
@@ -6145,6 +6195,8 @@ function showMenu(mode,winner){
   const crossRow=`<label class="check"><input type="checkbox" id="crosshairPick" ${crosshairOn?'checked':''}><span>ОБЫЧНЫЙ ПРИЦЕЛ</span><em>ПЕРЕКРЕСТИЕ В ИГРЕ</em></label>`;
   const traceRow=`<label class="check"><input type="checkbox" id="tracersPick" ${tracersOn?'checked':''}><span>ТРАССЕРА</span><em>ПУЛЕМЁТ: КАЖДЫЙ 5-Й ЗЕЛЁНЫЙ</em></label>`;
   const aimRow=touchMode?`<label class="check"><input type="checkbox" id="aimAssistPick" ${aimAssistOn?'checked':''}><span>АВТОПРИЦЕЛ</span><em>ПОДТЯГИВАЕТ К ЦЕЛИ ПРИ ОГНЕ И ПРИЦЕЛЕ</em></label>`:'';
+  const sensN=Math.round(mouseSens*10);
+  const sensRow=`<label class="sens"><span>ЧУВСТВИТЕЛЬНОСТЬ МЫШИ</span><input type="range" id="sensPick" min="2" max="30" step="1" value="${sensN}"><em id="sensVal">${(sensN/10).toFixed(1)}</em></label>`;
   const seg=(set,label,items,cur)=>`<div class="seg" data-set="${set}"><span class="seg-label">${label}</span>${items.map(([v,t])=>`<button data-v="${v}" class="${v===cur?'on':''}" aria-pressed="${v===cur}">${t}</button>`).join('')}</div>`;
   const classes=seg('class','КЛАСС',[[1,'ДРОБОВИК'],[2,'АВТОМАТ'],[3,'ПУЛЕМЁТ'],[4,'ВИНТОВКА']],player.nextPrimary);
   const modeSel=seg('mode','РЕЖИМ',[['ffa','ВСЕ ПРОТИВ ВСЕХ'],['last','ПОСЛЕДНИЙ ГЕРОЙ'],['solo','ОДИН ПРОТИВ ВСЕХ']],game.mode);
@@ -6237,6 +6289,7 @@ function showMenu(mode,winner){
       ${crossRow}
       ${traceRow}
       ${aimRow}
+      ${sensRow}
       ${hint}
     </div>`;
     return;
@@ -6260,6 +6313,7 @@ function showMenu(mode,winner){
     ${crossRow}
     ${traceRow}
     ${aimRow}
+    ${sensRow}
     <button class="btn start" data-action="start">ВОЙТИ В БОЙ</button>
     ${hint}
   </div>`;
@@ -6371,7 +6425,7 @@ function beginMatch(regenMap){
   hudSoloLeft=-1;
   killCombo=0;killComboAt=-99;
   $('#killPop').classList.remove('on');
-  fpsTimer=0;fpsFrames=0;
+  fpsTimer=0;fpsFrames=0;cpuSum=0;cpuN=0;
   scoreboardOpen=false; $('#scoreboard').classList.remove('on');
   $('#killfeed').innerHTML='';
   $('#hud').classList.add('on');
@@ -6490,7 +6544,7 @@ document.addEventListener('mousemove',e=>{
   /* pointer lock иногда отдаёт мусорные дельты (тысячи пикселей) при захвате
      курсора или после alt-tab — ограничиваем, чтобы камеру не закручивало */
   const mx=clamp(e.movementX,-220,220),my=clamp(e.movementY,-220,220);
-  const sens=.00215*(player.ads>.6&&currentWeapon().scope?.4:1);
+  const sens=lookScale(.00215);
   player.yaw-=mx*sens;
   player.pitch-=my*sens;
   player.pitch=clamp(player.pitch,-1.47,1.47);
@@ -6610,7 +6664,7 @@ const touchUI=(()=>{
     });
 
   function aimBy(dx,dy){
-    const sens=.0026*(player.ads>.6&&currentWeapon().scope?.4:1);
+    const sens=lookScale(.0026);
     player.yaw-=dx*sens;
     player.pitch=clamp(player.pitch-dy*sens,-1.47,1.47);
     player.swayX=clamp(player.swayX-dx*.00035,-.045,.045);
@@ -6654,6 +6708,12 @@ const touchUI=(()=>{
 
   return {show,reset,update};
 })();
+$('#overlay').addEventListener('input',e=>{
+  if(e.target.id!=='sensPick') return;
+  mouseSens=clamp((parseInt(e.target.value,10)||10)/10,.2,3);
+  const lab=$('#sensVal');
+  if(lab) lab.textContent=mouseSens.toFixed(1);
+});
 $('#overlay').addEventListener('change',e=>{
   if(e.target.id==='fullscreenPick') fullscreenPref=e.target.checked;
   else if(e.target.id==='crosshairPick'){
@@ -6744,8 +6804,11 @@ function initWorld(){
   setBotCount(game.botCount);
   spawnAllBots();
   for(const b of bots){b.invuln=99;b.think=999;b.roamT=999;b.path=null;}
-  $('#fps').style.display='none';
   updateMenuCamera(0);
+  console.assert(Math.abs(lookScale(.00215)-.00215)<1e-8,'[voxel-manor] default mouse sensitivity is unchanged');
+  mouseSens=2;
+  console.assert(Math.abs(lookScale(.00215)-.0043)<1e-8,'[voxel-manor] mouse sensitivity scales look');
+  mouseSens=1;
   showMenu('menu');
   console.assert(cellMap.size>5000,'[voxel-manor] world self-check: too few voxels');
   console.assert(NAV.nodes.length>300,'[voxel-manor] nav self-check: no walkable grid');
@@ -6770,6 +6833,8 @@ initWorld();
 
 function animate(){
   requestAnimationFrame(animate);
+  pollGpu();
+  const cpu0=performance.now();
   const dt=Math.min(clock.getDelta(),.05);
   wallT+=dt;
   /* adaptive pixel ratio: drop hard on weak GPUs, upscale below 1.0 if needed */
@@ -6797,7 +6862,10 @@ function animate(){
     updateMenuCamera(dt);
     updateHudFrame(0);
   }
+  beginGpu();
   renderer.render(scene,camera);
+  endGpu();
+  notePerf(dt,performance.now()-cpu0);
 }
 animate();
 
